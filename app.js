@@ -435,6 +435,11 @@ async function updateModelState() {
   const language = elements.language.value;
   const cached = await modelIsCached(language);
   if (language !== elements.language.value) return;
+  if (modelLoadRequest?.language === language) {
+    elements.modelState.textContent = "Loading model…";
+    elements.modelState.classList.remove("is-ready");
+    return;
+  }
   elements.modelState.textContent = cached ? "Model cached" : "Runs locally";
   elements.modelState.classList.toggle("is-ready", cached);
 }
@@ -456,6 +461,8 @@ function ensureModel(language) {
   });
   modelLoadRequest.promise = promise;
   modelReady = false;
+  elements.modelState.textContent = "Loading model…";
+  elements.modelState.classList.remove("is-ready");
   void requestPersistentStorage();
   showStatus("Preparing model", "Cached in this browser after download", null);
   pocketWorker.postMessage({
@@ -467,6 +474,9 @@ function ensureModel(language) {
     storageSet(modelCacheMarker(language), new Date().toISOString());
     await updateModelState();
     return result;
+  }).catch(async (error) => {
+    await updateModelState();
+    throw error;
   });
 }
 
