@@ -1,0 +1,18 @@
+{
+  "name": "ava — text to speech",
+  "short_name": "ava",
+  "description": "Private, local text-to-speech powered by Pocket TTS in your browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "./ava.png",
+      "sizes": "2240x2242",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

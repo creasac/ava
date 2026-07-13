@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Private text-to-speech that runs in your browser with Pocket TTS." />
+    <meta name="theme-color" content="#09090b" />
+    <title>ava — text to speech</title>
+    <link rel="icon" href="./ava.png" type="image/png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./style.css?v=15" />
+  </head>
+  <body>
+    <header class="header">
+      <a class="brand" href="./" aria-label="ava home">
+        <img class="brand-logo" src="./ava.png" alt="" />
+        <span>ava</span>
+      </a>
+      <span class="model-state" id="model-state">Runs locally</span>
+    </header>
+
+    <main>
+      <section class="composer" aria-label="Text to speech">
+        <textarea
+          id="source-text"
+          maxlength="12000"
+          spellcheck="true"
+          aria-label="Text to read"
+          placeholder="Paste text to listen…"
+        ></textarea>
+
+        <div class="composer-bar">
+          <label class="language-field">
+            <span class="visually-hidden">Language</span>
+            <select id="language-select" aria-label="Language">
+              <option value="english_2026-04">English</option>
+              <option value="german">Deutsch</option>
+              <option value="italian">Italiano</option>
+              <option value="portuguese">Português</option>
+              <option value="spanish">Español</option>
+            </select>
+          </label>
+          <section class="player is-empty" id="player" aria-label="Audio player" aria-busy="false">
+            <div class="player-bar">
+              <button class="play-button" id="play-button" type="button" disabled>
+                <svg class="playback-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path id="playback-icon-path" d="m9 7 8 5-8 5z" />
+                </svg>
+                <span class="visually-hidden" id="play-label">Play</span>
+              </button>
+
+              <div class="player-timeline">
+                <div class="seek-wrap" id="seek-wrap">
+                  <div class="seek-visual" aria-hidden="true"></div>
+                  <input
+                    class="seek"
+                    id="seek-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    value="0"
+                    step="1"
+                    aria-label="Playback position"
+                    disabled
+                  />
+                </div>
+
+                <div class="time-line">
+                  <span><span id="current-time">0:00</span> / <span id="duration">0:00</span></span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="visually-hidden" id="status" role="status" aria-live="polite" hidden>
+          <span id="status-label"></span>
+          <span id="status-detail"></span>
+          <div class="progress" id="progress" hidden><span id="progress-bar"></span></div>
+        </div>
+      </section>
+
+      <p class="shortcuts"><kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> ±5 seconds</p>
+    </main>
+
+    <footer>
+      <a href="https://github.com/kyutai-labs/pocket-tts" target="_blank" rel="noopener">Pocket TTS</a>
+      runs privately in this browser.
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="./app.js?v=27"></script>
+  </body>
+</html>
