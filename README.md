@@ -33,7 +33,10 @@ substantially larger and slower 24-layer bundle.
 Each language requires an approximately 130–132 MB first-use download; all five
 bundles and voices total about 656.5 MB. ava stores completed bundles in the
 browser Cache API, requests persistent storage, and reuses them without another
-model download. Cached models still need to be initialized on each new page load.
+model download. Open the language status in the header to inspect or remove stored
+languages at any time. Removing the active language stops its current load or
+generation; retained audio remains playable. Cached models still need to be
+initialized on each new page load.
 
 Caches are separate for each domain, browser, profile, and private window. Clearing
 site data or browser storage pressure can remove them.

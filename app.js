@@ -10,12 +10,19 @@ const MODEL_CACHE_NAME = "ava-pocket-tts-en-58a6d00-d0c0c79-v1";
 const MODEL_CACHE_MARKER_PREFIX = "ava-pocket-ready-58a6d00-e041936-v2";
 const PREFERENCES_KEY = "ava-preferences-v1";
 const DEFAULT_LANGUAGE = "english_2026-04";
+const LANGUAGE_DETAILS = {
+  [DEFAULT_LANGUAGE]: { label: "English", voice: "alba", bytes: 131658438 },
+  german: { label: "German", voice: "juergen", bytes: 131708069 },
+  italian: { label: "Italian", voice: "giovanni", bytes: 130086289 },
+  portuguese: { label: "Portuguese", voice: "rafael", bytes: 131660084 },
+  spanish: { label: "Spanish", voice: "lola", bytes: 131414218 },
+};
 const LANGUAGE_VOICES = {
-  [DEFAULT_LANGUAGE]: "alba",
-  german: "juergen",
-  italian: "giovanni",
-  portuguese: "rafael",
-  spanish: "lola",
+  [DEFAULT_LANGUAGE]: LANGUAGE_DETAILS[DEFAULT_LANGUAGE].voice,
+  german: LANGUAGE_DETAILS.german.voice,
+  italian: LANGUAGE_DETAILS.italian.voice,
+  portuguese: LANGUAGE_DETAILS.portuguese.voice,
+  spanish: LANGUAGE_DETAILS.spanish.voice,
 };
 const SUPPORTED_LANGUAGES = new Set(Object.keys(LANGUAGE_VOICES));
 const MODEL_CACHE_ASSETS = [
@@ -31,7 +38,9 @@ const MODEL_CACHE_ASSETS = [
 const elements = {
   text: document.querySelector("#source-text"),
   language: document.querySelector("#language-select"),
+  modelStorage: document.querySelector("#model-storage"),
   modelState: document.querySelector("#model-state"),
+  modelCacheList: document.querySelector("#model-cache-list"),
   status: document.querySelector("#status"),
   statusLabel: document.querySelector("#status-label"),
   statusDetail: document.querySelector("#status-detail"),
@@ -81,6 +90,7 @@ let isSeeking = false;
 let firstChunkSeen = false;
 let memoryLimitReached = false;
 let toastTimer = null;
+let modelStorageRevision = 0;
 
 let pendingServiceWorker = null;
 let serviceWorkerReloadPending = false;
@@ -270,8 +280,9 @@ function getWorker() {
     if (message.type === "model_progress") {
       const isCached = message.status === "cached";
       const percent = message.total > 0 ? (message.loaded / message.total) * 100 : null;
+      const language = modelLoadRequest?.language || loadedLanguage || elements.language.value;
       showStatus(
-        isCached ? "Opening model" : "Downloading model",
+        isCached ? `Opening ${languageLabel(language)}` : `Downloading ${languageLabel(language)}`,
         isCached ? "From browser storage" : "Cached for next time",
         percent,
       );
@@ -280,7 +291,7 @@ function getWorker() {
 
     if (message.type === "status") {
       if (modelLoadRequest && message.state === "loading") {
-        showStatus("Preparing model", "First use takes a moment", null);
+        showStatus(`Preparing ${languageLabel(modelLoadRequest.language)}`, "First use takes a moment", null);
       }
       return;
     }
@@ -410,22 +421,45 @@ function modelCacheMarker(language) {
   return `${MODEL_CACHE_MARKER_PREFIX}-${language}`;
 }
 
+function languageLabel(language) {
+  return LANGUAGE_DETAILS[language]?.label || "Language";
+}
+
+function modelUrlBelongsToLanguage(url, language) {
+  return url.includes(`/onnx/${language}/`)
+    || url.includes(`/languages/${language}/embeddings/`);
+}
+
+function cachedModelInfo(language, urls) {
+  const matchingUrls = urls.filter((url) => modelUrlBelongsToLanguage(url, language));
+  const hasModels = MODEL_CACHE_ASSETS.every((asset) => urls.some((url) => (
+    url.includes(`/${MODEL_REVISION}/onnx/${language}/`) && url.endsWith(asset)
+  )));
+  const voice = LANGUAGE_VOICES[language];
+  const hasVoice = urls.some((url) => (
+    url.includes(`/${VOICE_REVISION}/languages/${language}/embeddings/`)
+    && url.endsWith(`/${voice}.safetensors`)
+  ));
+  return {
+    cached: hasModels && hasVoice,
+    partial: matchingUrls.length > 0 && !(hasModels && hasVoice),
+    matchingUrls,
+  };
+}
+
+async function modelCacheUrls() {
+  if (!("caches" in window)) return null;
+  const names = await caches.keys();
+  if (!names.includes(MODEL_CACHE_NAME)) return [];
+  const cache = await caches.open(MODEL_CACHE_NAME);
+  return (await cache.keys()).map((request) => request.url);
+}
+
 async function modelIsCached(language = elements.language.value) {
   try {
-    if (!("caches" in window)) return Boolean(storageGet(modelCacheMarker(language)));
-    const names = await caches.keys();
-    if (!names.includes(MODEL_CACHE_NAME)) return false;
-    const cache = await caches.open(MODEL_CACHE_NAME);
-    const urls = (await cache.keys()).map((request) => request.url);
-    const hasModels = MODEL_CACHE_ASSETS.every((asset) => urls.some((url) => (
-      url.includes(`/${MODEL_REVISION}/onnx/${language}/`) && url.endsWith(asset)
-    )));
-    const voice = LANGUAGE_VOICES[language];
-    const hasVoice = urls.some((url) => (
-      url.includes(`/${VOICE_REVISION}/languages/${language}/embeddings/`)
-      && url.endsWith(`/${voice}.safetensors`)
-    ));
-    return hasModels && hasVoice;
+    const urls = await modelCacheUrls();
+    if (urls === null) return Boolean(storageGet(modelCacheMarker(language)));
+    return cachedModelInfo(language, urls).cached;
   } catch {
     return false;
   }
@@ -433,15 +467,151 @@ async function modelIsCached(language = elements.language.value) {
 
 async function updateModelState() {
   const language = elements.language.value;
-  const cached = await modelIsCached(language);
-  if (language !== elements.language.value) return;
   if (modelLoadRequest?.language === language) {
-    elements.modelState.textContent = "Loading model…";
+    elements.modelState.textContent = `Loading ${languageLabel(language)}…`;
     elements.modelState.classList.remove("is-ready");
     return;
   }
-  elements.modelState.textContent = cached ? "Model cached" : "Runs locally";
+  if (modelReady && loadedLanguage === language) {
+    elements.modelState.textContent = `${languageLabel(language)} loaded`;
+    elements.modelState.classList.add("is-ready");
+    return;
+  }
+  const cached = await modelIsCached(language);
+  if (language !== elements.language.value) return;
+  elements.modelState.textContent = cached
+    ? `${languageLabel(language)} cached`
+    : "Runs locally";
   elements.modelState.classList.toggle("is-ready", cached);
+}
+
+function formatModelSize(bytes) {
+  return `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
+async function refreshModelStorage() {
+  const revision = ++modelStorageRevision;
+
+  try {
+    const urls = await modelCacheUrls();
+    if (revision !== modelStorageRevision) return;
+    elements.modelCacheList.replaceChildren();
+
+    if (urls === null) {
+      const message = document.createElement("p");
+      message.className = "model-cache-empty";
+      message.textContent = "Model storage is unavailable in this browser.";
+      elements.modelCacheList.append(message);
+      return;
+    }
+
+    for (const [language, details] of Object.entries(LANGUAGE_DETAILS)) {
+      const cacheInfo = cachedModelInfo(language, urls);
+      const loaded = modelReady && loadedLanguage === language;
+      const loading = modelLoadRequest?.language === language;
+      const row = document.createElement("div");
+      row.className = "model-cache-row";
+
+      const copy = document.createElement("span");
+      copy.className = "model-cache-copy";
+      const name = document.createElement("span");
+      name.className = "model-cache-language";
+      name.textContent = details.label;
+      const detail = document.createElement("span");
+      detail.className = "model-cache-detail";
+      if (loading) {
+        detail.textContent = "Loading";
+      } else if (loaded && cacheInfo.cached) {
+        detail.textContent = `Loaded · ${formatModelSize(details.bytes)} stored`;
+      } else if (loaded) {
+        detail.textContent = "Loaded · not stored";
+      } else if (cacheInfo.cached) {
+        detail.textContent = `Cached · ${formatModelSize(details.bytes)}`;
+      } else if (cacheInfo.partial) {
+        detail.textContent = "Partial download";
+      } else {
+        detail.textContent = "Not downloaded";
+      }
+      copy.append(name, detail);
+      row.append(copy);
+
+      if (cacheInfo.matchingUrls.length > 0 || loaded || loading) {
+        const remove = document.createElement("button");
+        remove.className = "model-cache-remove";
+        remove.type = "button";
+        remove.dataset.removeModel = language;
+        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", `Remove stored ${details.label}`);
+        row.append(remove);
+      }
+
+      elements.modelCacheList.append(row);
+    }
+  } catch (error) {
+    console.error(error);
+    if (revision !== modelStorageRevision) return;
+    const message = document.createElement("p");
+    message.className = "model-cache-empty";
+    message.textContent = "Stored models could not be checked.";
+    elements.modelCacheList.replaceChildren(message);
+  }
+}
+
+async function removeStoredModel(language) {
+  const details = LANGUAGE_DETAILS[language];
+  if (!details) return;
+
+  try {
+    if (elements.language.value === language) {
+      generationRevision += 1;
+      clearTimeout(generationTimer);
+      generationTimer = null;
+      if (queuedGeneration?.language === language) queuedGeneration = null;
+    }
+
+    const workerLanguage = modelLoadRequest?.language || loadedLanguage;
+    const activeLanguage = workerLanguage === language;
+    if (activeLanguage) {
+      const pendingLoad = modelLoadRequest;
+      const pendingGeneration = generationRequest;
+      const cancellation = new Error(`${details.label} was removed`);
+      cancellation.code = "MODEL_REMOVED";
+
+      worker?.terminate();
+      worker = null;
+      modelReady = false;
+      loadedLanguage = null;
+      selectedVoice = null;
+      modelLoadRequest = null;
+      generationRequest = null;
+      acceptGenerationAudio = false;
+      streamEnded = true;
+      elements.status.hidden = true;
+      if (wantsPlayback) streamPlayer?.notifyStreamEnded();
+
+      pendingLoad?.reject(cancellation);
+      pendingGeneration?.resolve({ cancelled: true });
+    }
+
+    const urls = await modelCacheUrls();
+    if (urls === null) throw new Error("Cache Storage is unavailable");
+
+    if (urls.some((url) => modelUrlBelongsToLanguage(url, language))) {
+      const cache = await caches.open(MODEL_CACHE_NAME);
+      await Promise.all(urls
+        .filter((url) => modelUrlBelongsToLanguage(url, language))
+        .map((url) => cache.delete(url)));
+      if ((await cache.keys()).length === 0) await caches.delete(MODEL_CACHE_NAME);
+    }
+    storageRemove(modelCacheMarker(language));
+    updateActivityState();
+    showToast(`${details.label} removed`);
+    await Promise.all([updateModelState(), refreshModelStorage()]);
+  } catch (error) {
+    console.error(error);
+    showToast("Model could not be removed");
+    await refreshModelStorage();
+  }
 }
 
 function ensureModel(language) {
@@ -461,10 +631,11 @@ function ensureModel(language) {
   });
   modelLoadRequest.promise = promise;
   modelReady = false;
-  elements.modelState.textContent = "Loading model…";
+  elements.modelState.textContent = `Loading ${languageLabel(language)}…`;
   elements.modelState.classList.remove("is-ready");
+  if (elements.modelStorage.open) void refreshModelStorage();
   void requestPersistentStorage();
-  showStatus("Preparing model", "Cached in this browser after download", null);
+  showStatus(`Preparing ${languageLabel(language)}`, "Cached in this browser after download", null);
   pocketWorker.postMessage({
     type: switchingLanguage ? "set_language" : "load",
     data: { language },
@@ -472,10 +643,10 @@ function ensureModel(language) {
 
   return promise.then(async (result) => {
     storageSet(modelCacheMarker(language), new Date().toISOString());
-    await updateModelState();
+    await Promise.all([updateModelState(), refreshModelStorage()]);
     return result;
   }).catch(async (error) => {
-    await updateModelState();
+    await Promise.all([updateModelState(), refreshModelStorage()]);
     throw error;
   });
 }
@@ -578,6 +749,10 @@ async function generateSpeech(job) {
       elements.status.hidden = true;
     }
   } catch (error) {
+    if (error?.code === "MODEL_REMOVED") {
+      elements.status.hidden = true;
+      return;
+    }
     if (modelLoadRequest?.language === job.language) failWorker(error);
     console.error(error);
     acceptGenerationAudio = false;
@@ -727,6 +902,7 @@ function isTextEditingTarget(target) {
 
 function handleKeyboard(event) {
   if (isTextEditingTarget(event.target)) return;
+  if (event.target instanceof Element && event.target.closest("#model-storage")) return;
   if (![" ", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
 
   if (event.key === " ") {
@@ -806,9 +982,29 @@ elements.play.addEventListener("click", () => void togglePlayback());
 elements.play.addEventListener("pointerup", () => elements.play.blur());
 elements.text.addEventListener("input", () => scheduleGeneration());
 
+elements.modelStorage.addEventListener("toggle", () => {
+  if (elements.modelStorage.open) void refreshModelStorage();
+});
+
+elements.modelCacheList.addEventListener("click", (event) => {
+  const button = event.target instanceof Element
+    ? event.target.closest("button[data-remove-model]")
+    : null;
+  if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Removing…";
+  void removeStoredModel(button.dataset.removeModel);
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (!elements.modelStorage.open || elements.modelStorage.contains(event.target)) return;
+  elements.modelStorage.open = false;
+});
+
 elements.language.addEventListener("change", () => {
   savePreferences();
   void updateModelState();
+  if (elements.modelStorage.open) void refreshModelStorage();
   scheduleGeneration(0);
 });
 
@@ -852,4 +1048,5 @@ updateTimeline();
 updatePlayState();
 void removeLegacyEngineData();
 void updateModelState();
+if (elements.modelStorage.open) void refreshModelStorage();
 registerServiceWorker();

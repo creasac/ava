@@ -8,7 +8,7 @@
     <title>ava — text to speech</title>
     <link rel="icon" href="./ava.png" type="image/png" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./style.css?v=15" />
+    <link rel="stylesheet" href="./style.css?v=16" />
   </head>
   <body>
     <header class="header">
@@ -16,7 +16,17 @@
         <img class="brand-logo" src="./ava.png" alt="" />
         <span>ava</span>
       </a>
-      <span class="model-state" id="model-state">Runs locally</span>
+      <details class="model-storage" id="model-storage">
+        <summary class="model-storage-trigger" aria-label="Manage stored models">
+          <span class="model-state" id="model-state">Runs locally</span>
+        </summary>
+        <section class="model-storage-panel" aria-label="Stored models">
+          <h2>Stored models</h2>
+          <div class="model-cache-list" id="model-cache-list" aria-live="polite">
+            <p class="model-cache-empty">Checking storage…</p>
+          </div>
+        </section>
+      </details>
     </header>
 
     <main>
@@ -89,6 +99,6 @@
     </footer>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="./app.js?v=28"></script>
+    <script type="module" src="./app.js?v=29"></script>
   </body>
 </html>
