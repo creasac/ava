@@ -1,14 +1,17 @@
 # ava
 
-ava is a minimal Pocket TTS player: paste text, choose a language, and listen.
+ava is a minimal Pocket TTS player: paste text, choose a language and voice, and listen.
 
-**Live:** [tts.creasac.com](https://tts.creasac.com)
+**Live:** [ava.creasac.com](https://ava.creasac.com)
 
 ## Use
 
 Text changes start generation automatically after a 700 ms pause; selecting another
 language with text present restarts immediately. Audio builds silently in the
 background, while the current reading remains available for replay and seeking.
+Built-in voices appear in the voice selector. The microphone button records a
+3–10 second sample and creates a reusable cloned voice for the selected language.
+The last language and the selected voice for each language are remembered locally.
 
 | Key | Action |
 | --- | --- |
@@ -17,7 +20,7 @@ background, while the current reading remains available for replay and seeking.
 
 ## Languages
 
-| Language | Voice |
+| Language | Default voice |
 | --- | --- |
 | English | Alba |
 | German | Juergen |
@@ -27,6 +30,8 @@ background, while the current reading remains available for replay and seeking.
 
 French is not included because the pinned ONNX export provides it only as a
 substantially larger and slower 24-layer bundle.
+
+Each language has one built-in voice. Cloned voices are language-specific.
 
 ## Downloads and storage
 
@@ -38,13 +43,19 @@ languages at any time. Removing the active language stops its current load or
 generation; retained audio remains playable. Cached models still need to be
 initialized on each new page load.
 
+Voice cloning lazily adds the approximately 20.8 MB Mimi encoder for that
+language. Cloned voice embeddings are stored separately in IndexedDB; the
+storage menu lists and removes them without exposing removal controls for
+built-in voices.
+
 Caches are separate for each domain, browser, profile, and private window. Clearing
 site data or browser storage pressure can remove them.
 
 ## Privacy
 
-Pasted text and generated audio stay inside the browser. ava has no account,
-application backend, inference API, analytics, cookies, or microphone access.
+Pasted text, microphone recordings, cloned voice states, and generated audio stay
+inside the browser. Microphone access is requested only when recording a clone.
+ava has no account, application backend, inference API, analytics, or cookies.
 
 The browser retrieves the site from Cloudflare Pages, ONNX Runtime from jsDelivr,
 and model assets from Hugging Face. Those providers receive ordinary network
@@ -58,6 +69,9 @@ AudioWorklet, Cache Storage, and cross-origin isolation. Inference uses the devi
 CPU through ONNX Runtime Web, with at most four WASM threads; no GPU or cloud
 compute is used.
 
+Voice cloning additionally requires MediaRecorder, microphone permission, and
+IndexedDB.
+
 Production hosting must use HTTPS and return the COOP and COEP headers defined in
 `_headers`.
 
@@ -67,8 +81,10 @@ Production hosting must use HTTPS and return the COOP and COEP headers defined i
 - Editing text discards the old audio and regenerates from the beginning
 - Reloading or closing the tab discards text, audio, and playback position
 - Forward seeking stops at the generated live edge
-- No voice cloning, speed control, in-app volume control, audio export, history,
-  or word-level text/audio alignment
+- Voice clones require 3–10 seconds of clear, consented speech and are tied to the
+  language selected while recording
+- No speed control, in-app volume control, audio export, history, or word-level
+  text/audio alignment
 - Full offline startup is not guaranteed because the runtime remains an external
   dependency
 
@@ -83,6 +99,10 @@ Pasted text ─────────────────────┘  
                                                             │
                                                             ▼
                                                      AudioWorklet ─► speakers
+
+Microphone ─► Mimi encoder ─► cloned voice embedding ─► IndexedDB
+                                      │
+                                      └─► inference worker conditioning
 ```
 
 A dedicated worker loads four ONNX sessions and the selected built-in voice. It

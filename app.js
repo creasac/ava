@@ -3,12 +3,16 @@ const MAX_TEXT_LENGTH = 12000;
 const MAX_SESSION_SECONDS = 15 * 60;
 const MAX_SESSION_SAMPLES = MAX_SESSION_SECONDS * SAMPLE_RATE;
 const AUTO_GENERATE_DELAY = 700;
+const MAX_VOICE_SECONDS = 10;
+const MIN_VOICE_SECONDS = 3;
 const MODEL_REVISION = "58a6d00cf13d239b6748cb0769f35c580a8f606c";
 const VOICE_REVISION = "e041936c75475d350b405bc870bcf7c22da4e9e6";
 // Keep the original cache name so existing English model downloads are reused.
 const MODEL_CACHE_NAME = "ava-pocket-tts-en-58a6d00-d0c0c79-v1";
 const MODEL_CACHE_MARKER_PREFIX = "ava-pocket-ready-58a6d00-e041936-v2";
 const PREFERENCES_KEY = "ava-preferences-v1";
+const VOICE_DATABASE_NAME = "ava-voices-v1";
+const VOICE_STORE_NAME = "voices";
 const DEFAULT_LANGUAGE = "english_2026-04";
 const LANGUAGE_DETAILS = {
   [DEFAULT_LANGUAGE]: { label: "English", voice: "alba", bytes: 131658438 },
@@ -24,6 +28,13 @@ const LANGUAGE_VOICES = {
   portuguese: LANGUAGE_DETAILS.portuguese.voice,
   spanish: LANGUAGE_DETAILS.spanish.voice,
 };
+const LANGUAGE_BUILTIN_VOICES = {
+  [DEFAULT_LANGUAGE]: ["alba"],
+  german: ["juergen"],
+  italian: ["giovanni"],
+  portuguese: ["rafael"],
+  spanish: ["lola"],
+};
 const SUPPORTED_LANGUAGES = new Set(Object.keys(LANGUAGE_VOICES));
 const MODEL_CACHE_ASSETS = [
   "/bundle.json",
@@ -38,9 +49,12 @@ const MODEL_CACHE_ASSETS = [
 const elements = {
   text: document.querySelector("#source-text"),
   language: document.querySelector("#language-select"),
+  voice: document.querySelector("#voice-select"),
+  clone: document.querySelector("#clone-button"),
   modelStorage: document.querySelector("#model-storage"),
   modelState: document.querySelector("#model-state"),
   modelCacheList: document.querySelector("#model-cache-list"),
+  clonedVoiceList: document.querySelector("#cloned-voice-list"),
   status: document.querySelector("#status"),
   statusLabel: document.querySelector("#status-label"),
   statusDetail: document.querySelector("#status-detail"),
@@ -54,6 +68,13 @@ const elements = {
   play: document.querySelector("#play-button"),
   playLabel: document.querySelector("#play-label"),
   playbackIconPath: document.querySelector("#playback-icon-path"),
+  voiceDialog: document.querySelector("#voice-dialog"),
+  voiceForm: document.querySelector("#voice-form"),
+  voiceDialogClose: document.querySelector("#voice-dialog-close"),
+  voiceName: document.querySelector("#voice-name"),
+  record: document.querySelector("#record-button"),
+  recordLabel: document.querySelector("#record-label"),
+  recordStatus: document.querySelector("#record-status"),
   toast: document.querySelector("#toast"),
 };
 
@@ -63,11 +84,15 @@ let worker = null;
 let modelReady = false;
 let loadedLanguage = null;
 let selectedVoice = null;
+let voiceSelections = {};
 let modelLoadRequest = null;
 let generationRequest = null;
+let voiceRequest = null;
+let activeWorkerCustomVoices = new Set();
 let isLoading = false;
 let isGenerating = false;
 let isStopping = false;
+let isVoiceTask = false;
 let acceptGenerationAudio = false;
 let generationRevision = 0;
 let generationTimer = null;
@@ -91,6 +116,16 @@ let firstChunkSeen = false;
 let memoryLimitReached = false;
 let toastTimer = null;
 let modelStorageRevision = 0;
+let voiceStorageRevision = 0;
+let voiceOptionsRevision = 0;
+let voiceDatabasePromise = null;
+
+let mediaRecorder = null;
+let microphoneStream = null;
+let recordingChunks = [];
+let recordingStartedAt = 0;
+let recordingTimer = null;
+let recordingStopTimer = null;
 
 let pendingServiceWorker = null;
 let serviceWorkerReloadPending = false;
@@ -119,6 +154,107 @@ function storageRemove(key) {
   }
 }
 
+function openVoiceDatabase() {
+  if (voiceDatabasePromise) return voiceDatabasePromise;
+  if (!("indexedDB" in window)) return Promise.reject(new Error("IndexedDB is unavailable"));
+
+  voiceDatabasePromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(VOICE_DATABASE_NAME, 1);
+    request.addEventListener("upgradeneeded", () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(VOICE_STORE_NAME)) {
+        const store = database.createObjectStore(VOICE_STORE_NAME, { keyPath: "id" });
+        store.createIndex("language", "language", { unique: false });
+      }
+    });
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error || new Error("Voice storage failed")));
+    request.addEventListener("blocked", () => reject(new Error("Voice storage is blocked")));
+  });
+  voiceDatabasePromise.catch(() => {
+    voiceDatabasePromise = null;
+  });
+  return voiceDatabasePromise;
+}
+
+function databaseRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.addEventListener("success", () => resolve(request.result));
+    request.addEventListener("error", () => reject(request.error || new Error("Storage request failed")));
+  });
+}
+
+async function getClonedVoices(language = null) {
+  const database = await openVoiceDatabase();
+  const transaction = database.transaction(VOICE_STORE_NAME, "readonly");
+  const store = transaction.objectStore(VOICE_STORE_NAME);
+  const request = language ? store.index("language").getAll(language) : store.getAll();
+  const voices = await databaseRequest(request);
+  return voices.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+async function getClonedVoice(id) {
+  const database = await openVoiceDatabase();
+  const transaction = database.transaction(VOICE_STORE_NAME, "readonly");
+  return databaseRequest(transaction.objectStore(VOICE_STORE_NAME).get(id));
+}
+
+async function putClonedVoice(voice) {
+  const database = await openVoiceDatabase();
+  const transaction = database.transaction(VOICE_STORE_NAME, "readwrite");
+  await databaseRequest(transaction.objectStore(VOICE_STORE_NAME).put(voice));
+}
+
+async function deleteClonedVoice(id) {
+  const database = await openVoiceDatabase();
+  const transaction = database.transaction(VOICE_STORE_NAME, "readwrite");
+  await databaseRequest(transaction.objectStore(VOICE_STORE_NAME).delete(id));
+}
+
+function displayVoiceName(voice) {
+  return voice
+    .split("_")
+    .map((part) => part ? part[0].toUpperCase() + part.slice(1) : "")
+    .join(" ");
+}
+
+function renderVoiceOptions(language, clonedVoices, preferred) {
+  const options = [];
+  for (const voice of LANGUAGE_BUILTIN_VOICES[language] || [LANGUAGE_VOICES[language]]) {
+    const option = document.createElement("option");
+    option.value = voice;
+    option.textContent = `${displayVoiceName(voice)} (built-in)`;
+    options.push(option);
+  }
+
+  for (const voice of clonedVoices) {
+    const option = document.createElement("option");
+    option.value = `custom:${voice.id}`;
+    option.textContent = `${voice.name} (clone)`;
+    options.push(option);
+  }
+
+  elements.voice.replaceChildren(...options);
+  elements.voice.value = preferred;
+  if (!elements.voice.value) elements.voice.value = LANGUAGE_VOICES[language];
+  selectedVoice = elements.voice.value;
+  voiceSelections[language] = selectedVoice;
+}
+
+async function populateVoiceOptions(language = elements.language.value) {
+  const revision = ++voiceOptionsRevision;
+  const preferred = voiceSelections[language] || LANGUAGE_VOICES[language];
+  renderVoiceOptions(language, [], preferred);
+
+  try {
+    const clonedVoices = await getClonedVoices(language);
+    if (revision !== voiceOptionsRevision || language !== elements.language.value) return;
+    renderVoiceOptions(language, clonedVoices, preferred);
+  } catch {
+    // Built-in voices remain available without IndexedDB.
+  }
+}
+
 function loadPreferences() {
   try {
     const saved = JSON.parse(storageGet(PREFERENCES_KEY) || "null");
@@ -128,14 +264,20 @@ function loadPreferences() {
       elements.language.value = saved.language;
     }
 
+    if (saved.voices && typeof saved.voices === "object") {
+      voiceSelections = { ...saved.voices };
+    }
+
   } catch {
     // Ignore malformed preferences.
   }
 }
 
 function savePreferences() {
+  if (elements.voice.value) voiceSelections[elements.language.value] = elements.voice.value;
   storageSet(PREFERENCES_KEY, JSON.stringify({
     language: elements.language.value,
+    voices: voiceSelections,
   }));
 }
 
@@ -191,7 +333,9 @@ function updateSeekVisual(playedRatio, bufferedRatio) {
 }
 
 function updateActivityState() {
-  const busy = Boolean(generationTimer || queuedGeneration || isLoading || isGenerating || isStopping);
+  const busy = Boolean(
+    generationTimer || queuedGeneration || isLoading || isGenerating || isStopping || isVoiceTask
+  );
   elements.player.setAttribute("aria-busy", String(busy));
 }
 
@@ -244,6 +388,7 @@ function failWorker(error) {
   const failedWorker = worker;
   const pendingLoad = modelLoadRequest;
   const pendingGeneration = generationRequest;
+  const pendingVoice = voiceRequest;
 
   worker = null;
   modelReady = false;
@@ -251,10 +396,13 @@ function failWorker(error) {
   selectedVoice = null;
   modelLoadRequest = null;
   generationRequest = null;
+  voiceRequest = null;
+  activeWorkerCustomVoices.clear();
   failedWorker?.terminate();
 
   pendingLoad?.reject(error);
   pendingGeneration?.reject(error);
+  pendingVoice?.reject(error);
 }
 
 function stopAtSessionLimit() {
@@ -269,7 +417,7 @@ function stopAtSessionLimit() {
 function getWorker() {
   if (worker) return worker;
 
-  worker = new Worker(new URL("./pocket/inference-worker.js?v=11", import.meta.url), {
+  worker = new Worker(new URL("./pocket/inference-worker.js?v=13", import.meta.url), {
     type: "module",
     name: "ava-pocket-tts",
   });
@@ -298,7 +446,7 @@ function getWorker() {
 
     if (message.type === "voices_loaded") {
       if (message.language === modelLoadRequest?.language || message.language === loadedLanguage) {
-        selectedVoice = message.defaultVoice || null;
+        selectedVoice = elements.voice.value || message.defaultVoice || null;
       }
       return;
     }
@@ -307,12 +455,35 @@ function getWorker() {
       if (!modelLoadRequest || message.language !== modelLoadRequest.language) return;
       loadedLanguage = message.language;
       modelReady = true;
+      activeWorkerCustomVoices.clear();
       modelLoadRequest?.resolve(true);
       modelLoadRequest = null;
       return;
     }
 
     if (message.type === "loaded") return;
+
+    if (message.type === "voice_encoded") {
+      const pendingVoice = voiceRequest;
+      voiceRequest = null;
+      selectedVoice = message.voiceName;
+      activeWorkerCustomVoices.clear();
+      activeWorkerCustomVoices.add(message.voiceName);
+      pendingVoice?.resolve(message);
+      return;
+    }
+
+    if (message.type === "voice_set") {
+      const pendingVoice = voiceRequest;
+      voiceRequest = null;
+      selectedVoice = message.voiceName;
+      if (message.voiceName?.startsWith("custom:")) {
+        activeWorkerCustomVoices.clear();
+        activeWorkerCustomVoices.add(message.voiceName);
+      }
+      pendingVoice?.resolve(message);
+      return;
+    }
 
     if (message.type === "audio_chunk" && message.data) {
       if (!acceptGenerationAudio) return;
@@ -359,6 +530,12 @@ function getWorker() {
     }
 
     if (message.type === "error") {
+      if (voiceRequest) {
+        const pendingVoice = voiceRequest;
+        voiceRequest = null;
+        pendingVoice.reject(new Error(message.error || "Voice preparation failed"));
+        return;
+      }
       failWorker(new Error(message.error || "Pocket TTS failed"));
     }
   });
@@ -557,6 +734,80 @@ async function refreshModelStorage() {
   }
 }
 
+async function refreshClonedVoiceStorage() {
+  const revision = ++voiceStorageRevision;
+  try {
+    const voices = await getClonedVoices();
+    if (revision !== voiceStorageRevision) return;
+    elements.clonedVoiceList.replaceChildren();
+
+    if (!voices.length) {
+      const message = document.createElement("p");
+      message.className = "model-cache-empty";
+      message.textContent = "None stored";
+      elements.clonedVoiceList.append(message);
+      return;
+    }
+
+    for (const voice of voices) {
+      const row = document.createElement("div");
+      row.className = "model-cache-row";
+      const copy = document.createElement("span");
+      copy.className = "model-cache-copy";
+      const name = document.createElement("span");
+      name.className = "model-cache-language";
+      name.textContent = voice.name;
+      const detail = document.createElement("span");
+      detail.className = "model-cache-detail";
+      const bytes = voice.embedding?.byteLength || 0;
+      detail.textContent = `${languageLabel(voice.language)} · ${formatModelSize(bytes)}`;
+      copy.append(name, detail);
+
+      const remove = document.createElement("button");
+      remove.className = "model-cache-remove";
+      remove.type = "button";
+      remove.dataset.removeVoice = voice.id;
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove cloned voice ${voice.name}`);
+      row.append(copy, remove);
+      elements.clonedVoiceList.append(row);
+    }
+  } catch {
+    if (revision !== voiceStorageRevision) return;
+    const message = document.createElement("p");
+    message.className = "model-cache-empty";
+    message.textContent = "Voice storage is unavailable";
+    elements.clonedVoiceList.replaceChildren(message);
+  }
+}
+
+async function removeStoredVoice(id) {
+  try {
+    const voice = await getClonedVoice(id);
+    if (!voice) return;
+    await deleteClonedVoice(id);
+    if (worker && loadedLanguage === voice.language) {
+      worker.postMessage({ type: "remove_custom_voice", data: { id } });
+      activeWorkerCustomVoices.delete(`custom:${id}`);
+    }
+
+    const wasSelected = elements.language.value === voice.language
+      && elements.voice.value === `custom:${id}`;
+    if (wasSelected) {
+      voiceSelections[voice.language] = LANGUAGE_VOICES[voice.language];
+    }
+    await populateVoiceOptions(elements.language.value);
+    savePreferences();
+    await refreshClonedVoiceStorage();
+    showToast(`${voice.name} removed`);
+    if (wasSelected) scheduleGeneration(0);
+  } catch (error) {
+    console.error(error);
+    showToast("Voice could not be removed");
+    await refreshClonedVoiceStorage();
+  }
+}
+
 async function removeStoredModel(language) {
   const details = LANGUAGE_DETAILS[language];
   if (!details) return;
@@ -574,6 +825,7 @@ async function removeStoredModel(language) {
     if (activeLanguage) {
       const pendingLoad = modelLoadRequest;
       const pendingGeneration = generationRequest;
+      const pendingVoice = voiceRequest;
       const cancellation = new Error(`${details.label} was removed`);
       cancellation.code = "MODEL_REMOVED";
 
@@ -584,6 +836,8 @@ async function removeStoredModel(language) {
       selectedVoice = null;
       modelLoadRequest = null;
       generationRequest = null;
+      voiceRequest = null;
+      activeWorkerCustomVoices.clear();
       acceptGenerationAudio = false;
       streamEnded = true;
       elements.status.hidden = true;
@@ -591,6 +845,7 @@ async function removeStoredModel(language) {
 
       pendingLoad?.reject(cancellation);
       pendingGeneration?.resolve({ cancelled: true });
+      pendingVoice?.reject(cancellation);
     }
 
     const urls = await modelCacheUrls();
@@ -697,12 +952,36 @@ function clearSession() {
   updatePlayState();
 }
 
-function generateWithPocket(text, language) {
+function requestWorkerVoice(type, data, transfer = []) {
+  if (voiceRequest) return Promise.reject(new Error("A voice is already being prepared"));
+  const promise = new Promise((resolve, reject) => {
+    voiceRequest = { promise: null, resolve, reject };
+  });
+  voiceRequest.promise = promise;
+  getWorker().postMessage({ type, data }, transfer);
+  return promise;
+}
+
+async function ensureCustomVoiceForWorker(voiceName, language) {
+  if (!voiceName?.startsWith("custom:") || activeWorkerCustomVoices.has(voiceName)) return;
+  const id = voiceName.slice("custom:".length);
+  const voice = await getClonedVoice(id);
+  if (!voice || voice.language !== language) throw new Error("The selected cloned voice is unavailable");
+  const embedding = voice.embedding.slice(0);
+  await requestWorkerVoice("load_custom_voice", {
+    id,
+    embedding,
+    shape: voice.shape,
+  }, [embedding]);
+}
+
+function generateWithPocket(text, language, voice) {
   if (generationRequest) return Promise.reject(new Error("Speech is already being generated"));
   const promise = new Promise((resolve, reject) => {
-    generationRequest = { resolve, reject };
+    generationRequest = { promise: null, resolve, reject };
   });
-  getWorker().postMessage({ type: "generate", data: { text, language, voice: selectedVoice } });
+  generationRequest.promise = promise;
+  getWorker().postMessage({ type: "generate", data: { text, language, voice } });
   return promise;
 }
 
@@ -720,7 +999,10 @@ function friendlyError(error) {
   if (/audioworklet|audio context/i.test(message)) {
     return "This browser cannot play streamed audio.";
   }
-  if (/voice|language bundle/i.test(message)) {
+  if (/voice/i.test(message)) {
+    return "The voice could not be prepared. Try recording it again.";
+  }
+  if (/language bundle/i.test(message)) {
     return "This language could not be prepared. Reload ava and retry.";
   }
   return "Reload ava and retry.";
@@ -734,6 +1016,9 @@ async function generateSpeech(job) {
   try {
     await Promise.all([ensureModel(job.language), playerPromise]);
     if (job.revision !== generationRevision) return;
+    await ensureCustomVoiceForWorker(job.voice, job.language);
+    if (job.revision !== generationRevision) return;
+    selectedVoice = job.voice;
 
     resetSession(job.text);
     acceptGenerationAudio = true;
@@ -742,7 +1027,7 @@ async function generateSpeech(job) {
     updateActivityState();
     showStatus("Generating", "", null);
 
-    const result = await generateWithPocket(job.text, job.language);
+    const result = await generateWithPocket(job.text, job.language, job.voice);
     if (memoryLimitReached) {
       showStatus("Stopped", "15-minute reading limit reached", false);
     } else if (!result.cancelled) {
@@ -777,7 +1062,7 @@ async function generateSpeech(job) {
 }
 
 function runQueuedGeneration() {
-  if (isLoading || isGenerating || !queuedGeneration) return;
+  if (isLoading || isGenerating || isVoiceTask || !queuedGeneration) return;
   const job = queuedGeneration;
   queuedGeneration = null;
   updateActivityState();
@@ -816,6 +1101,7 @@ function scheduleGeneration(delay = AUTO_GENERATE_DELAY) {
       revision: generationRevision,
       text: elements.text.value.trim(),
       language: elements.language.value,
+      voice: elements.voice.value,
     };
 
     if (!isLoading && !isGenerating) {
@@ -870,6 +1156,215 @@ function seekBy(seconds) {
   showToast(`${seconds > 0 ? "+" : ""}${seconds}s`);
 }
 
+function setRecordingUi(recording) {
+  elements.record.classList.toggle("is-recording", recording);
+  elements.recordLabel.textContent = recording ? "Stop and clone" : "Start recording";
+  elements.voiceName.disabled = recording || isVoiceTask;
+}
+
+function stopMicrophone() {
+  clearInterval(recordingTimer);
+  clearTimeout(recordingStopTimer);
+  recordingTimer = null;
+  recordingStopTimer = null;
+  microphoneStream?.getTracks().forEach((track) => track.stop());
+  microphoneStream = null;
+}
+
+function resetVoiceDialog() {
+  stopMicrophone();
+  mediaRecorder = null;
+  recordingChunks = [];
+  recordingStartedAt = 0;
+  isVoiceTask = false;
+  elements.record.disabled = false;
+  elements.voiceDialogClose.disabled = false;
+  elements.language.disabled = false;
+  elements.voice.disabled = false;
+  elements.clone.disabled = false;
+  elements.recordStatus.textContent = "Stored only in this browser.";
+  setRecordingUi(false);
+  updateActivityState();
+}
+
+function resampleMonoAudio(audioBuffer) {
+  const sourceLength = audioBuffer.length;
+  const mono = new Float32Array(sourceLength);
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+    const data = audioBuffer.getChannelData(channel);
+    for (let index = 0; index < sourceLength; index++) mono[index] += data[index];
+  }
+  if (audioBuffer.numberOfChannels > 1) {
+    for (let index = 0; index < sourceLength; index++) mono[index] /= audioBuffer.numberOfChannels;
+  }
+  if (audioBuffer.sampleRate === SAMPLE_RATE) return mono;
+
+  const ratio = audioBuffer.sampleRate / SAMPLE_RATE;
+  const output = new Float32Array(Math.floor(mono.length / ratio));
+  for (let index = 0; index < output.length; index++) {
+    const sourceIndex = index * ratio;
+    const lower = Math.floor(sourceIndex);
+    const upper = Math.min(lower + 1, mono.length - 1);
+    const mix = sourceIndex - lower;
+    output[index] = mono[lower] * (1 - mix) + mono[upper] * mix;
+  }
+  return output;
+}
+
+async function decodeRecording(blob) {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) throw new Error("Audio decoding is unavailable");
+  const context = new AudioContextConstructor();
+  try {
+    const buffer = await context.decodeAudioData(await blob.arrayBuffer());
+    return resampleMonoAudio(buffer).slice(0, MAX_VOICE_SECONDS * SAMPLE_RATE);
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+async function stopSpeechForVoiceTask() {
+  generationRevision += 1;
+  clearTimeout(generationTimer);
+  generationTimer = null;
+  queuedGeneration = null;
+  acceptGenerationAudio = false;
+  const pendingGeneration = generationRequest?.promise;
+  if (isGenerating && !isStopping) {
+    isStopping = true;
+    worker?.postMessage({ type: "stop" });
+  }
+  if (pendingGeneration) await pendingGeneration.catch(() => {});
+}
+
+async function cloneRecordedVoice(blob, durationSeconds) {
+  const name = elements.voiceName.value.trim();
+  if (!name) throw new Error("Give the voice a name");
+  if (durationSeconds < MIN_VOICE_SECONDS) {
+    throw new Error(`Record at least ${MIN_VOICE_SECONDS} seconds`);
+  }
+
+  isVoiceTask = true;
+  elements.record.disabled = true;
+  elements.voiceDialogClose.disabled = true;
+  elements.language.disabled = true;
+  elements.voice.disabled = true;
+  elements.clone.disabled = true;
+  setRecordingUi(false);
+  updateActivityState();
+  elements.recordStatus.textContent = "Preparing recording…";
+
+  const language = elements.language.value;
+  const audio = await decodeRecording(blob);
+  await stopSpeechForVoiceTask();
+  elements.recordStatus.textContent = `Loading ${languageLabel(language)}…`;
+  await ensureModel(language);
+
+  const id = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  elements.recordStatus.textContent = "Cloning voice…";
+  const result = await requestWorkerVoice("encode_voice", { id, audio }, [audio.buffer]);
+  const embedding = result.embedding instanceof Float32Array
+    ? result.embedding.buffer.slice(0)
+    : result.embedding;
+  await putClonedVoice({
+    id,
+    name: name.slice(0, 40),
+    language,
+    shape: result.shape.map(Number),
+    embedding,
+    createdAt: new Date().toISOString(),
+  });
+
+  const voiceName = `custom:${id}`;
+  voiceSelections[language] = voiceName;
+  await populateVoiceOptions(language);
+  elements.voice.value = voiceName;
+  selectedVoice = voiceName;
+  savePreferences();
+  await refreshClonedVoiceStorage();
+  elements.voiceDialog.close();
+  showToast(`${name} saved`);
+  isVoiceTask = false;
+  updateActivityState();
+  if (elements.text.value.trim()) scheduleGeneration(0);
+}
+
+async function stopRecordingAndClone() {
+  if (!mediaRecorder || mediaRecorder.state !== "recording") return;
+  const recorder = mediaRecorder;
+  const durationSeconds = (performance.now() - recordingStartedAt) / 1000;
+  const stopped = new Promise((resolve) => recorder.addEventListener("stop", resolve, { once: true }));
+  recorder.stop();
+  stopMicrophone();
+  setRecordingUi(false);
+  await stopped;
+  const blob = new Blob(recordingChunks, { type: recorder.mimeType || "audio/webm" });
+  mediaRecorder = null;
+
+  try {
+    await cloneRecordedVoice(blob, durationSeconds);
+  } catch (error) {
+    console.error(error);
+    isVoiceTask = false;
+    elements.record.disabled = false;
+    elements.voiceDialogClose.disabled = false;
+    elements.language.disabled = false;
+    elements.voice.disabled = false;
+    elements.clone.disabled = false;
+    setRecordingUi(false);
+    updateActivityState();
+    elements.recordStatus.textContent = error.message || "Voice cloning failed";
+  }
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !("MediaRecorder" in window)) {
+    elements.recordStatus.textContent = "Recording is unavailable in this browser.";
+    return;
+  }
+  if (!elements.voiceName.value.trim()) {
+    elements.recordStatus.textContent = "Give the voice a name first.";
+    elements.voiceName.focus();
+    return;
+  }
+
+  try {
+    microphoneStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+    const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"]
+      .find((type) => MediaRecorder.isTypeSupported(type));
+    mediaRecorder = mimeType
+      ? new MediaRecorder(microphoneStream, { mimeType })
+      : new MediaRecorder(microphoneStream);
+    recordingChunks = [];
+    mediaRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size) recordingChunks.push(event.data);
+    });
+    mediaRecorder.start(250);
+    recordingStartedAt = performance.now();
+    elements.language.disabled = true;
+    elements.voice.disabled = true;
+    elements.clone.disabled = true;
+    setRecordingUi(true);
+
+    const updateTimer = () => {
+      const elapsed = Math.min(MAX_VOICE_SECONDS, (performance.now() - recordingStartedAt) / 1000);
+      elements.recordStatus.textContent = `${elapsed.toFixed(1)} / ${MAX_VOICE_SECONDS}s`;
+    };
+    updateTimer();
+    recordingTimer = setInterval(updateTimer, 100);
+    recordingStopTimer = setTimeout(() => void stopRecordingAndClone(), MAX_VOICE_SECONDS * 1000);
+  } catch (error) {
+    console.error(error);
+    stopMicrophone();
+    setRecordingUi(false);
+    elements.recordStatus.textContent = error.name === "NotAllowedError"
+      ? "Microphone permission was not granted."
+      : "The microphone could not be opened.";
+  }
+}
+
 async function togglePlayback() {
   if (!sessionAvailable || !audioContext) return;
   const atEnd = streamEnded && playbackPositionSamples >= receivedSamples - SAMPLE_RATE / 10;
@@ -902,7 +1397,10 @@ function isTextEditingTarget(target) {
 
 function handleKeyboard(event) {
   if (isTextEditingTarget(event.target)) return;
-  if (event.target instanceof Element && event.target.closest("#model-storage")) return;
+  if (
+    event.target instanceof Element
+    && event.target.closest("#model-storage, #voice-dialog")
+  ) return;
   if (![" ", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
 
   if (event.key === " ") {
@@ -921,7 +1419,13 @@ function handleKeyboard(event) {
 }
 
 function appIsIdleForUpdate() {
-  return !isLoading && !isGenerating && !isStopping && !isPlaying && !sessionAvailable;
+  return !isLoading
+    && !isGenerating
+    && !isStopping
+    && !isVoiceTask
+    && !mediaRecorder
+    && !isPlaying
+    && !sessionAvailable;
 }
 
 function activatePendingServiceWorkerIfIdle() {
@@ -983,7 +1487,10 @@ elements.play.addEventListener("pointerup", () => elements.play.blur());
 elements.text.addEventListener("input", () => scheduleGeneration());
 
 elements.modelStorage.addEventListener("toggle", () => {
-  if (elements.modelStorage.open) void refreshModelStorage();
+  if (elements.modelStorage.open) {
+    void refreshModelStorage();
+    void refreshClonedVoiceStorage();
+  }
 });
 
 elements.modelCacheList.addEventListener("click", (event) => {
@@ -996,16 +1503,53 @@ elements.modelCacheList.addEventListener("click", (event) => {
   void removeStoredModel(button.dataset.removeModel);
 });
 
+elements.clonedVoiceList.addEventListener("click", (event) => {
+  const button = event.target instanceof Element
+    ? event.target.closest("button[data-remove-voice]")
+    : null;
+  if (!(button instanceof HTMLButtonElement) || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "Removing…";
+  void removeStoredVoice(button.dataset.removeVoice);
+});
+
 document.addEventListener("pointerdown", (event) => {
   if (!elements.modelStorage.open || elements.modelStorage.contains(event.target)) return;
   elements.modelStorage.open = false;
 });
 
-elements.language.addEventListener("change", () => {
-  savePreferences();
+elements.language.addEventListener("change", async () => {
   void updateModelState();
   if (elements.modelStorage.open) void refreshModelStorage();
+  await populateVoiceOptions(elements.language.value);
+  savePreferences();
   scheduleGeneration(0);
+});
+
+elements.voice.addEventListener("change", () => {
+  selectedVoice = elements.voice.value;
+  savePreferences();
+  scheduleGeneration(0);
+});
+
+elements.clone.addEventListener("click", () => {
+  elements.voiceName.value = "My voice";
+  elements.recordStatus.textContent = "Stored only in this browser.";
+  elements.voiceDialog.showModal();
+  elements.voiceName.select();
+});
+
+elements.record.addEventListener("click", () => {
+  if (mediaRecorder?.state === "recording") {
+    void stopRecordingAndClone();
+  } else {
+    void startRecording();
+  }
+});
+
+elements.voiceDialog.addEventListener("close", () => {
+  if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+  resetVoiceDialog();
 });
 
 elements.seek.addEventListener("pointerdown", () => {
@@ -1041,6 +1585,7 @@ elements.seek.addEventListener("pointercancel", () => {
 document.addEventListener("keydown", handleKeyboard, true);
 
 loadPreferences();
+void populateVoiceOptions(elements.language.value);
 updateSeekVisual(0, 0);
 updateActivityState();
 updatePlayerControls();
@@ -1048,5 +1593,8 @@ updateTimeline();
 updatePlayState();
 void removeLegacyEngineData();
 void updateModelState();
-if (elements.modelStorage.open) void refreshModelStorage();
+if (elements.modelStorage.open) {
+  void refreshModelStorage();
+  void refreshClonedVoiceStorage();
+}
 registerServiceWorker();

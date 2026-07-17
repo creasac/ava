@@ -1,7 +1,7 @@
 // Pocket TTS ONNX Web Worker
 // Adapted for ava from KevinAHM/pocket-tts-web (Apache-2.0).
-// ava changes: remote model caching, multilingual built-in voices,
-// no voice-cloning encoder, and streamed Float32 audio chunks.
+// ava changes: remote model caching, multilingual built-in and cloned voices,
+// lazy voice-cloning encoder loading, and streamed Float32 audio chunks.
 console.log("Pocket TTS Worker Starting...");
 self.postMessage({ type: "status", status: "Worker Thread Started", state: "idle" });
 
@@ -22,6 +22,13 @@ const LANGUAGE_DEFAULT_VOICES = {
     portuguese: "rafael",
     spanish: "lola",
 };
+const LANGUAGE_BUILTIN_VOICES = {
+    "english_2026-04": ["alba"],
+    german: ["juergen"],
+    italian: ["giovanni"],
+    portuguese: ["rafael"],
+    spanish: ["lola"],
+};
 const MODEL_BASE_URL =
     "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx";
 const VOICE_ASSET_BASE_URL =
@@ -29,6 +36,7 @@ const VOICE_ASSET_BASE_URL =
 // Keep the original cache name so existing English model downloads are reused.
 const MODEL_CACHE_NAME = "ava-pocket-tts-en-58a6d00-d0c0c79-v1";
 const MODEL_STEMS = {
+    mimi_encoder: "mimi_encoder_int8.onnx",
     text_conditioner: "text_conditioner_int8.onnx",
     flow_lm_main: "flow_lm_main_int8.onnx",
     flow_lm_flow: "flow_lm_flow_int8.onnx",
@@ -61,7 +69,7 @@ let currentConditioningDim = 1024;
 let currentMaxTokenPerChunk = 50;
 
 let predefinedVoiceRecords = {};
-let customVoiceEmbedding = null;
+let customVoiceEmbeddings = new Map();
 let currentVoiceName = null;
 let voiceConditioningCache = new Map();
 
@@ -286,8 +294,16 @@ async function buildVoiceConditionedState(voiceEmb) {
 
 async function ensurePredefinedVoiceCached(voiceName, options = {}) {
     const { force = false, statusText = "Preparing voice..." } = options;
-    if (!predefinedVoiceRecords[voiceName]) {
+    if (!LANGUAGE_BUILTIN_VOICES[currentLanguage]?.includes(voiceName)) {
         throw new Error(`Unknown built-in voice: ${voiceName}`);
+    }
+
+    if (!predefinedVoiceRecords[voiceName]) {
+        const voiceBuffer = await fetchCachedAsset(
+            `${VOICE_ASSET_BASE_URL}/${currentLanguage}/embeddings/${voiceName}.safetensors`,
+            `${voiceName}.safetensors`,
+        );
+        predefinedVoiceRecords[voiceName] = parseSafetensorsVoice(voiceBuffer, voiceName);
     }
 
     if (!force && voiceConditioningCache.has(voiceName)) {
@@ -300,19 +316,20 @@ async function ensurePredefinedVoiceCached(voiceName, options = {}) {
     return conditioned;
 }
 
-async function ensureCustomVoiceCached(options = {}) {
+async function ensureCustomVoiceCached(voiceName, options = {}) {
     const { force = false, statusText = "Preparing custom voice..." } = options;
+    const customVoiceEmbedding = customVoiceEmbeddings.get(voiceName);
     if (!customVoiceEmbedding) {
         throw new Error("No custom voice loaded.");
     }
 
-    if (!force && voiceConditioningCache.has("custom")) {
-        return voiceConditioningCache.get("custom");
+    if (!force && voiceConditioningCache.has(voiceName)) {
+        return voiceConditioningCache.get(voiceName);
     }
 
     postMessage({ type: "status", status: statusText, state: "loading" });
     const conditioned = await buildVoiceConditionedState(customVoiceEmbedding);
-    voiceConditioningCache.set("custom", conditioned);
+    voiceConditioningCache.set(voiceName, conditioned);
     return conditioned;
 }
 
@@ -441,6 +458,17 @@ async function encodeVoiceAudio(audioData) {
     }
 
     return { data, shape: dims };
+}
+
+async function ensureMimiEncoder() {
+    if (mimiEncoderSession) return mimiEncoderSession;
+    postMessage({ type: "status", status: "Loading voice encoder...", state: "loading" });
+    mimiEncoderSession = await createCachedSession(
+        currentLanguage,
+        MODEL_STEMS.mimi_encoder,
+        { executionProviders: ["wasm"], graphOptimizationLevel: "all" },
+    );
+    return mimiEncoderSession;
 }
 
 function prepareTextPrompt(text) {
@@ -765,30 +793,20 @@ async function loadBundle(language, { initialLoad = false } = {}) {
     }
 
     const defaultVoice = LANGUAGE_DEFAULT_VOICES[language];
-    const voiceFilename = `${defaultVoice}.safetensors`;
-    const voiceBuffer = await fetchCachedAsset(
-        `${VOICE_ASSET_BASE_URL}/${language}/embeddings/${voiceFilename}`,
-        voiceFilename,
-    );
-    predefinedVoiceRecords = {
-        [defaultVoice]: parseSafetensorsVoice(voiceBuffer, defaultVoice),
-    };
+    predefinedVoiceRecords = {};
     voiceConditioningCache = new Map();
     currentVoiceName = defaultVoice;
     await ensurePredefinedVoiceCached(defaultVoice, {
         force: true,
         statusText: `Preparing voice (${defaultVoice})...`,
     });
-
-    if (customVoiceEmbedding) {
-        voiceConditioningCache.delete("custom");
-    }
+    customVoiceEmbeddings = new Map();
 
     isReady = true;
 
     postMessage({
         type: "voices_loaded",
-        voices: [defaultVoice],
+        voices: LANGUAGE_BUILTIN_VOICES[language] || [defaultVoice],
         defaultVoice,
         language,
     });
@@ -837,7 +855,63 @@ self.onmessage = async (e) => {
         }
 
         if (type === "encode_voice") {
-            postMessage({ type: "error", error: "Voice cloning is not included in the ava benchmark." });
+            if (isGenerating) {
+                postMessage({ type: "error", error: "Cannot encode a voice while generation is running." });
+                return;
+            }
+            await ensureMimiEncoder();
+            const voiceName = `custom:${data.id}`;
+            const embedding = await encodeVoiceAudio(data.audio);
+            for (const key of customVoiceEmbeddings.keys()) voiceConditioningCache.delete(key);
+            customVoiceEmbeddings.clear();
+            customVoiceEmbeddings.set(voiceName, embedding);
+            currentVoiceName = voiceName;
+            await ensureCustomVoiceCached(voiceName, {
+                force: true,
+                statusText: "Preparing cloned voice...",
+            });
+            const persistedData = new Float32Array(embedding.data);
+            postMessage({
+                type: "voice_encoded",
+                voiceName,
+                id: data.id,
+                embedding: persistedData,
+                shape: embedding.shape,
+            }, [persistedData.buffer]);
+            postMessage({ type: "status", status: "Ready", state: "idle" });
+            return;
+        }
+
+        if (type === "load_custom_voice") {
+            if (isGenerating) {
+                postMessage({ type: "error", error: "Cannot load a voice while generation is running." });
+                return;
+            }
+            const voiceName = `custom:${data.id}`;
+            const embeddingData = data.embedding instanceof Float32Array
+                ? data.embedding
+                : new Float32Array(data.embedding);
+            for (const key of customVoiceEmbeddings.keys()) voiceConditioningCache.delete(key);
+            customVoiceEmbeddings.clear();
+            customVoiceEmbeddings.set(voiceName, {
+                data: new Float32Array(embeddingData),
+                shape: data.shape.map(Number),
+            });
+            await ensureCustomVoiceCached(voiceName, {
+                force: true,
+                statusText: "Preparing cloned voice...",
+            });
+            currentVoiceName = voiceName;
+            postMessage({ type: "voice_set", voiceName });
+            postMessage({ type: "status", status: "Ready", state: "idle" });
+            return;
+        }
+
+        if (type === "remove_custom_voice") {
+            const voiceName = `custom:${data.id}`;
+            customVoiceEmbeddings.delete(voiceName);
+            voiceConditioningCache.delete(voiceName);
+            if (currentVoiceName === voiceName) currentVoiceName = LANGUAGE_DEFAULT_VOICES[currentLanguage];
             return;
         }
 
@@ -846,8 +920,8 @@ self.onmessage = async (e) => {
                 postMessage({ type: "error", error: "Cannot switch voice while generation is running." });
                 return;
             }
-            if (data.voiceName === "custom") {
-                await ensureCustomVoiceCached({ statusText: "Preparing custom voice..." });
+            if (data.voiceName.startsWith("custom:")) {
+                await ensureCustomVoiceCached(data.voiceName, { statusText: "Preparing cloned voice..." });
                 currentVoiceName = "custom";
             } else {
                 await ensurePredefinedVoiceCached(data.voiceName, {
@@ -888,8 +962,8 @@ async function startGeneration(text, voiceName) {
             throw new Error("No text to generate");
         }
 
-        if (voiceName === "custom") {
-            await ensureCustomVoiceCached({ statusText: "Preparing custom voice..." });
+        if (voiceName.startsWith("custom:")) {
+            await ensureCustomVoiceCached(voiceName, { statusText: "Preparing cloned voice..." });
         } else {
             await ensurePredefinedVoiceCached(voiceName, {
                 statusText: `Preparing voice (${voiceName})...`,

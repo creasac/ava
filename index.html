@@ -8,7 +8,7 @@
     <title>ava — text to speech</title>
     <link rel="icon" href="./ava.png" type="image/png" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./style.css?v=16" />
+    <link rel="stylesheet" href="./style.css?v=17" />
   </head>
   <body>
     <header class="header">
@@ -17,12 +17,16 @@
         <span>ava</span>
       </a>
       <details class="model-storage" id="model-storage">
-        <summary class="model-storage-trigger" aria-label="Manage stored models">
+        <summary class="model-storage-trigger" aria-label="Manage local storage">
           <span class="model-state" id="model-state">Runs locally</span>
         </summary>
-        <section class="model-storage-panel" aria-label="Stored models">
+        <section class="model-storage-panel" aria-label="Local storage">
           <h2>Stored models</h2>
           <div class="model-cache-list" id="model-cache-list" aria-live="polite">
+            <p class="model-cache-empty">Checking storage…</p>
+          </div>
+          <h2 class="storage-subheading">Cloned voices</h2>
+          <div class="model-cache-list" id="cloned-voice-list" aria-live="polite">
             <p class="model-cache-empty">Checking storage…</p>
           </div>
         </section>
@@ -50,6 +54,15 @@
               <option value="spanish">Español</option>
             </select>
           </label>
+          <label class="voice-field">
+            <span class="visually-hidden">Voice</span>
+            <select id="voice-select" aria-label="Voice"></select>
+          </label>
+          <button class="clone-button" id="clone-button" type="button" aria-label="Clone a voice" title="Clone a voice">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 15a4 4 0 0 0 4-4V7a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4Zm-6-4a1 1 0 0 1 2 0 4 4 0 0 0 8 0 1 1 0 1 1 2 0 6 6 0 0 1-5 5.92V20h3a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2h3v-3.08A6 6 0 0 1 6 11Z" />
+            </svg>
+          </button>
           <section class="player is-empty" id="player" aria-label="Audio player" aria-busy="false">
             <div class="player-bar">
               <button class="play-button" id="play-button" type="button" disabled>
@@ -98,7 +111,26 @@
       runs privately in this browser.
     </footer>
 
+    <dialog class="voice-dialog" id="voice-dialog">
+      <form method="dialog" class="voice-dialog-card" id="voice-form">
+        <div class="voice-dialog-heading">
+          <h2>Clone a voice</h2>
+          <button class="dialog-close" id="voice-dialog-close" value="cancel" aria-label="Close">×</button>
+        </div>
+        <p>Record 3–10 seconds of a clear, consented voice.</p>
+        <label class="voice-name-field">
+          <span>Name</span>
+          <input id="voice-name" maxlength="40" autocomplete="off" value="My voice" />
+        </label>
+        <button class="record-button" id="record-button" type="button">
+          <span class="record-dot" aria-hidden="true"></span>
+          <span id="record-label">Start recording</span>
+        </button>
+        <p class="record-status" id="record-status" role="status" aria-live="polite">Stored only in this browser.</p>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="./app.js?v=29"></script>
+    <script type="module" src="./app.js?v=32"></script>
   </body>
 </html>
