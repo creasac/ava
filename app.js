@@ -72,6 +72,7 @@ const elements = {
   play: document.querySelector("#play-button"),
   playLabel: document.querySelector("#play-label"),
   playbackIconPath: document.querySelector("#playback-icon-path"),
+  download: document.querySelector("#download-button"),
   voiceDialog: document.querySelector("#voice-dialog"),
   voiceForm: document.querySelector("#voice-form"),
   voiceDialogClose: document.querySelector("#voice-dialog-close"),
@@ -113,6 +114,9 @@ let displayedPlaybackRatio = 0;
 let lastTimelinePositionSamples = 0;
 let streamEnded = true;
 let sessionAvailable = false;
+let downloadReady = false;
+let isExporting = false;
+let ignoreNextStreamEnd = false;
 let isPlaying = false;
 let wantsPlayback = false;
 let isSeeking = false;
@@ -341,6 +345,93 @@ function formatTime(samples) {
   return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${seconds}`;
 }
 
+function writeWavText(view, offset, text) {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index));
+  }
+}
+
+async function createWavBlob(chunks, totalSamples) {
+  const bytesPerSample = 2;
+  const dataBytes = totalSamples * bytesPerSample;
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+
+  writeWavText(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeWavText(view, 8, "WAVE");
+  writeWavText(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, SAMPLE_RATE, true);
+  view.setUint32(28, SAMPLE_RATE * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeWavText(view, 36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  const parts = [header];
+  let remaining = totalSamples;
+  let samplesSinceYield = 0;
+
+  for (const chunk of chunks) {
+    const length = Math.min(chunk.length, remaining);
+    if (length <= 0) break;
+    const pcm = new Uint8Array(length * bytesPerSample);
+
+    for (let index = 0; index < length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, chunk[index]));
+      const value = Math.round(sample < 0 ? sample * 32768 : sample * 32767);
+      pcm[index * 2] = value & 0xff;
+      pcm[index * 2 + 1] = (value >> 8) & 0xff;
+    }
+
+    parts.push(pcm);
+    remaining -= length;
+    samplesSinceYield += length;
+    if (samplesSinceYield >= SAMPLE_RATE * 10) {
+      samplesSinceYield = 0;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  if (remaining !== 0) throw new Error("The completed audio is unavailable");
+  return new Blob(parts, { type: "audio/wav" });
+}
+
+async function downloadWav() {
+  if (!downloadReady || isExporting || receivedSamples <= 0) return;
+
+  isExporting = true;
+  updatePlayerControls();
+  elements.download.setAttribute("aria-busy", "true");
+  showToast("Preparing WAV…");
+
+  const chunks = audioChunks.map(({ data }) => data);
+  const totalSamples = receivedSamples;
+  const language = languageLabel(elements.language.value).toLowerCase();
+
+  try {
+    const wav = await createWavBlob(chunks, totalSamples);
+    const url = URL.createObjectURL(wav);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ava-${language}.wav`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    console.error(error);
+    showToast("Audio download failed");
+  } finally {
+    isExporting = false;
+    elements.download.removeAttribute("aria-busy");
+    updatePlayerControls();
+  }
+}
+
 function estimateDurationSamples(text) {
   const words = text.trim().split(/\s+/u).filter(Boolean).length;
   const characters = Array.from(text).filter((character) => /[\p{L}\p{N}]/u.test(character)).length;
@@ -372,6 +463,7 @@ function updatePlayerControls() {
   const enabled = sessionAvailable;
   elements.seek.disabled = !enabled;
   elements.play.disabled = !enabled;
+  elements.download.disabled = !downloadReady || isExporting;
   elements.player.classList.toggle("is-empty", !enabled);
 }
 
@@ -426,6 +518,7 @@ function failWorker(error) {
   modelLoadRequest = null;
   generationRequest = null;
   voiceRequest = null;
+  ignoreNextStreamEnd = false;
   activeWorkerCustomVoices.clear();
   failedWorker?.terminate();
 
@@ -544,7 +637,12 @@ function getWorker() {
     }
 
     if (message.type === "stream_ended") {
+      if (ignoreNextStreamEnd) {
+        ignoreNextStreamEnd = false;
+        return;
+      }
       streamEnded = true;
+      downloadReady = receivedSamples > 0;
       if (wantsPlayback) streamPlayer?.notifyStreamEnded();
       updateTimeline();
       generationRequest?.resolve({ cancelled: false });
@@ -553,6 +651,12 @@ function getWorker() {
     }
 
     if (message.type === "generation_cancelled") {
+      ignoreNextStreamEnd = true;
+      streamEnded = true;
+      downloadReady = false;
+      if (wantsPlayback) streamPlayer?.notifyStreamEnded();
+      updateTimeline();
+      updatePlayerControls();
       generationRequest?.resolve({ cancelled: true });
       generationRequest = null;
       return;
@@ -947,6 +1051,7 @@ function resetSession(text) {
   lastTimelinePositionSamples = 0;
   streamEnded = false;
   sessionAvailable = false;
+  downloadReady = false;
   isPlaying = false;
   wantsPlayback = continuePlayback;
   firstChunkSeen = false;
@@ -970,6 +1075,7 @@ function clearSession() {
   lastTimelinePositionSamples = 0;
   streamEnded = true;
   sessionAvailable = false;
+  downloadReady = false;
   isPlaying = false;
   wantsPlayback = false;
   firstChunkSeen = false;
@@ -1572,6 +1678,8 @@ elements.themeToggle.addEventListener("click", toggleTheme);
 matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
   if (!document.documentElement.dataset.theme) updateThemeUi();
 });
+
+elements.download.addEventListener("click", () => void downloadWav());
 
 elements.record.addEventListener("click", () => {
   if (mediaRecorder?.state === "recording") {

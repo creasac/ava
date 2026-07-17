@@ -14,7 +14,7 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
       } catch {}
     </script>
-    <link rel="stylesheet" href="./style.css?v=24" />
+    <link rel="stylesheet" href="./style.css?v=25" />
   </head>
   <body>
     <header class="header">
@@ -110,6 +110,11 @@
                   <span><span id="current-time">0:00</span> / <span id="duration">0:00</span></span>
                 </div>
               </div>
+              <button class="download-button" id="download-button" type="button" aria-label="Download WAV" title="Download WAV" disabled>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M11 4a1 1 0 1 1 2 0v9.59l2.3-2.3a1 1 0 0 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 1.4-1.42l2.3 2.3V4Zm-5 14a1 1 0 0 1 1 1v1h10v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z" />
+                </svg>
+              </button>
             </div>
           </section>
         </div>
@@ -149,6 +154,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="./app.js?v=34"></script>
+    <script type="module" src="./app.js?v=35"></script>
   </body>
 </html>

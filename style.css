@@ -595,6 +595,30 @@ select option {
   fill: currentcolor;
 }
 
+.download-button {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 42px;
+  padding: 0;
+  color: var(--control-text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+
+.download-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--control-hover);
+}
+
+.download-button svg {
+  width: 17px;
+  height: 17px;
+  fill: currentcolor;
+}
+
 .shortcuts {
   margin: 14px 0 0;
   color: var(--shortcut-text);

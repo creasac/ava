@@ -14,6 +14,8 @@ Built-in voices appear in the voice selector. The microphone button records a
 The last language and the selected voice for each language are remembered locally.
 The theme follows the operating system until the header toggle is used, then the
 chosen theme is remembered locally.
+When generation finishes, the player can download the completed reading as a
+16-bit mono WAV without regenerating it.
 
 | Key | Action |
 | --- | --- |
@@ -85,8 +87,8 @@ Production hosting must use HTTPS and return the COOP and COEP headers defined i
 - Forward seeking stops at the generated live edge
 - Voice clones require 3–10 seconds of clear, consented speech and are tied to the
   language selected while recording
-- No speed control, in-app volume control, audio export, history, or word-level
-  text/audio alignment
+- No speed control, in-app volume control, history, or word-level text/audio
+  alignment
 - Full offline startup is not guaranteed because the runtime remains an external
   dependency
 
