@@ -11,6 +11,7 @@ const VOICE_REVISION = "e041936c75475d350b405bc870bcf7c22da4e9e6";
 const MODEL_CACHE_NAME = "ava-pocket-tts-en-58a6d00-d0c0c79-v1";
 const MODEL_CACHE_MARKER_PREFIX = "ava-pocket-ready-58a6d00-e041936-v2";
 const PREFERENCES_KEY = "ava-preferences-v1";
+const THEME_KEY = "ava-theme-v1";
 const VOICE_DATABASE_NAME = "ava-voices-v1";
 const VOICE_STORE_NAME = "voices";
 const DEFAULT_LANGUAGE = "english_2026-04";
@@ -55,6 +56,9 @@ const elements = {
   modelState: document.querySelector("#model-state"),
   modelCacheList: document.querySelector("#model-cache-list"),
   clonedVoiceList: document.querySelector("#cloned-voice-list"),
+  themeToggle: document.querySelector("#theme-toggle"),
+  themeIconPath: document.querySelector("#theme-icon-path"),
+  themeColor: document.querySelector("#theme-color"),
   status: document.querySelector("#status"),
   statusLabel: document.querySelector("#status-label"),
   statusDetail: document.querySelector("#status-detail"),
@@ -154,6 +158,31 @@ function storageRemove(key) {
   }
 }
 
+function currentTheme() {
+  const explicit = document.documentElement.dataset.theme;
+  if (explicit === "light" || explicit === "dark") return explicit;
+  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function updateThemeUi() {
+  const theme = currentTheme();
+  const next = theme === "light" ? "dark" : "light";
+  const label = `Use ${next} theme`;
+  elements.themeToggle.setAttribute("aria-label", label);
+  elements.themeToggle.title = label;
+  elements.themeColor.content = theme === "light" ? "#f4f1ed" : "#09090b";
+  elements.themeIconPath.setAttribute("d", theme === "light"
+    ? "M12.7 2.2a9.8 9.8 0 1 0 9.1 13.5 1 1 0 0 0-1.4-1.2 7.4 7.4 0 0 1-8.9-10.8 1 1 0 0 0 1.2-1.5Z"
+    : "M12 3a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V4a1 1 0 0 1 1-1Zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm9 4a1 1 0 0 1-1 1h-1a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1ZM6 12a1 1 0 0 1-1 1H4a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1Zm12.36-6.36a1 1 0 0 1 0 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71a1 1 0 0 1 1.42 0ZM7.76 16.24a1 1 0 0 1 0 1.41l-.7.71a1 1 0 0 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Zm10.6 2.12a1 1 0 0 1-1.42 0l-.7-.71a1 1 0 0 1 1.41-1.41l.71.7a1 1 0 0 1 0 1.42ZM7.76 7.76a1 1 0 0 1-1.41 0l-.71-.7a1 1 0 0 1 1.42-1.42l.7.71a1 1 0 0 1 0 1.41ZM12 18a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Z");
+}
+
+function toggleTheme() {
+  const theme = currentTheme() === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = theme;
+  storageSet(THEME_KEY, theme);
+  updateThemeUi();
+}
+
 function openVoiceDatabase() {
   if (voiceDatabasePromise) return voiceDatabasePromise;
   if (!("indexedDB" in window)) return Promise.reject(new Error("IndexedDB is unavailable"));
@@ -230,7 +259,7 @@ function renderVoiceOptions(language, clonedVoices, preferred) {
   for (const voice of clonedVoices) {
     const option = document.createElement("option");
     option.value = `custom:${voice.id}`;
-    option.textContent = `${voice.name} (clone)`;
+    option.textContent = voice.name;
     options.push(option);
   }
 
@@ -1539,6 +1568,11 @@ elements.clone.addEventListener("click", () => {
   elements.voiceName.select();
 });
 
+elements.themeToggle.addEventListener("click", toggleTheme);
+matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+  if (!document.documentElement.dataset.theme) updateThemeUi();
+});
+
 elements.record.addEventListener("click", () => {
   if (mediaRecorder?.state === "recording") {
     void stopRecordingAndClone();
@@ -1585,6 +1619,7 @@ elements.seek.addEventListener("pointercancel", () => {
 document.addEventListener("keydown", handleKeyboard, true);
 
 loadPreferences();
+updateThemeUi();
 void populateVoiceOptions(elements.language.value);
 updateSeekVisual(0, 0);
 updateActivityState();

@@ -12,6 +12,8 @@ background, while the current reading remains available for replay and seeking.
 Built-in voices appear in the voice selector. The microphone button records a
 3–10 second sample and creates a reusable cloned voice for the selected language.
 The last language and the selected voice for each language are remembered locally.
+The theme follows the operating system until the header toggle is used, then the
+chosen theme is remembered locally.
 
 | Key | Action |
 | --- | --- |
