@@ -14,7 +14,7 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
       } catch {}
     </script>
-    <link rel="stylesheet" href="./style.css?v=22" />
+    <link rel="stylesheet" href="./style.css?v=24" />
   </head>
   <body>
     <header class="header">
@@ -57,25 +57,30 @@
         ></textarea>
 
         <div class="composer-bar">
-          <label class="language-field">
-            <span class="visually-hidden">Language</span>
-            <select id="language-select" aria-label="Language">
-              <option value="english_2026-04">English</option>
-              <option value="german">Deutsch</option>
-              <option value="italian">Italiano</option>
-              <option value="portuguese">Português</option>
-              <option value="spanish">Español</option>
-            </select>
-          </label>
-          <label class="voice-field">
-            <span class="visually-hidden">Voice</span>
-            <select id="voice-select" aria-label="Voice"></select>
-          </label>
-          <button class="clone-button" id="clone-button" type="button" aria-label="Clone a voice" title="Clone a voice">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 15a4 4 0 0 0 4-4V7a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4Zm-6-4a1 1 0 0 1 2 0 4 4 0 0 0 8 0 1 1 0 1 1 2 0 6 6 0 0 1-5 5.92V20h3a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2h3v-3.08A6 6 0 0 1 6 11Z" />
-            </svg>
-          </button>
+          <div class="composer-controls">
+            <label class="language-field">
+              <span class="control-label">Language:</span>
+              <select id="language-select" aria-label="Language">
+                <option value="english_2026-04">English</option>
+                <option value="german">Deutsch</option>
+                <option value="italian">Italiano</option>
+                <option value="portuguese">Português</option>
+                <option value="spanish">Español</option>
+              </select>
+            </label>
+            <label class="voice-field">
+              <span class="control-label">Voice:</span>
+              <select id="voice-select" aria-label="Voice"></select>
+            </label>
+            <div class="clone-field">
+              <span class="control-label">Clone:</span>
+              <button class="clone-button" id="clone-button" type="button" aria-label="Clone a voice" title="Clone a voice">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 15a4 4 0 0 0 4-4V7a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4Zm-6-4a1 1 0 0 1 2 0 4 4 0 0 0 8 0 1 1 0 1 1 2 0 6 6 0 0 1-5 5.92V20h3a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2h3v-3.08A6 6 0 0 1 6 11Z" />
+                </svg>
+              </button>
+            </div>
+          </div>
           <section class="player is-empty" id="player" aria-label="Audio player" aria-busy="false">
             <div class="player-bar">
               <button class="play-button" id="play-button" type="button" disabled>
