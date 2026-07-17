@@ -10,6 +10,7 @@ let ort = null;
 const DEFAULT_LANGUAGE = "english_2026-04";
 const LANGUAGE_BUNDLES = [
     "english_2026-04",
+    "french_24l",
     "german",
     "italian",
     "portuguese",
@@ -17,6 +18,7 @@ const LANGUAGE_BUNDLES = [
 ];
 const LANGUAGE_DEFAULT_VOICES = {
     "english_2026-04": "alba",
+    french_24l: "estelle",
     german: "juergen",
     italian: "giovanni",
     portuguese: "rafael",
@@ -24,6 +26,7 @@ const LANGUAGE_DEFAULT_VOICES = {
 };
 const LANGUAGE_BUILTIN_VOICES = {
     "english_2026-04": ["alba"],
+    french_24l: ["estelle"],
     german: ["juergen"],
     italian: ["giovanni"],
     portuguese: ["rafael"],

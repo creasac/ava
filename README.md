@@ -28,25 +28,28 @@ When generation finishes, the player can download the completed reading as a
 | Language | Default voice |
 | --- | --- |
 | English | Alba |
+| French | Estelle |
 | German | Juergen |
 | Italian | Giovanni |
 | Portuguese | Rafael |
 | Spanish | Lola |
 
-French is not included because the pinned ONNX export provides it only as a
-substantially larger and slower 24-layer bundle.
+French uses the substantially larger 24-layer bundle. It works locally like the
+other languages, but generation is much slower on typical CPUs; for uninterrupted
+playback, let the reading finish generating first.
 
 Each language has one built-in voice. Cloned voices are language-specific.
 
 ## Downloads and storage
 
-Each language requires an approximately 130–132 MB first-use download; all five
-bundles and voices total about 656.5 MB. ava stores completed bundles in the
-browser Cache API, requests persistent storage, and reuses them without another
-model download. Open the language status in the header to inspect or remove stored
-languages at any time. Removing the active language stops its current load or
-generation; retained audio remains playable. Cached models still need to be
-initialized on each new page load.
+Each 6-layer language requires an approximately 130–132 MB first-use model
+download. French requires about 387 MB on first use, including its Estelle voice.
+The model assets across all six languages total about 1.01 GB; voice files add to
+that. ava stores completed bundles in the browser Cache API, requests persistent
+storage, and reuses them without another model download. Open the language status
+in the header to inspect or remove stored languages at any time. Removing the
+active language stops its current load or generation; retained audio remains
+playable. Cached models still need to be initialized on each new page load.
 
 Voice cloning lazily adds the approximately 20.8 MB Mimi encoder for that
 language. Cloned voice embeddings are stored separately in IndexedDB; the

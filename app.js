@@ -17,6 +17,7 @@ const VOICE_STORE_NAME = "voices";
 const DEFAULT_LANGUAGE = "english_2026-04";
 const LANGUAGE_DETAILS = {
   [DEFAULT_LANGUAGE]: { label: "English", voice: "alba", bytes: 131658438 },
+  french_24l: { label: "French", voice: "estelle", bytes: 354285748 },
   german: { label: "German", voice: "juergen", bytes: 131708069 },
   italian: { label: "Italian", voice: "giovanni", bytes: 130086289 },
   portuguese: { label: "Portuguese", voice: "rafael", bytes: 131660084 },
@@ -24,6 +25,7 @@ const LANGUAGE_DETAILS = {
 };
 const LANGUAGE_VOICES = {
   [DEFAULT_LANGUAGE]: LANGUAGE_DETAILS[DEFAULT_LANGUAGE].voice,
+  french_24l: LANGUAGE_DETAILS.french_24l.voice,
   german: LANGUAGE_DETAILS.german.voice,
   italian: LANGUAGE_DETAILS.italian.voice,
   portuguese: LANGUAGE_DETAILS.portuguese.voice,
@@ -31,6 +33,7 @@ const LANGUAGE_VOICES = {
 };
 const LANGUAGE_BUILTIN_VOICES = {
   [DEFAULT_LANGUAGE]: ["alba"],
+  french_24l: ["estelle"],
   german: ["juergen"],
   italian: ["giovanni"],
   portuguese: ["rafael"],
@@ -73,6 +76,7 @@ const elements = {
   playLabel: document.querySelector("#play-label"),
   playbackIconPath: document.querySelector("#playback-icon-path"),
   download: document.querySelector("#download-button"),
+  generationNote: document.querySelector("#generation-note"),
   voiceDialog: document.querySelector("#voice-dialog"),
   voiceForm: document.querySelector("#voice-form"),
   voiceDialogClose: document.querySelector("#voice-dialog-close"),
@@ -125,6 +129,7 @@ let isSeeking = false;
 let firstChunkSeen = false;
 let memoryLimitReached = false;
 let toastTimer = null;
+let generationNoteTimer = null;
 let modelStorageRevision = 0;
 let voiceStorageRevision = 0;
 let voiceOptionsRevision = 0;
@@ -258,7 +263,7 @@ function renderVoiceOptions(language, clonedVoices, preferred) {
   for (const voice of LANGUAGE_BUILTIN_VOICES[language] || [LANGUAGE_VOICES[language]]) {
     const option = document.createElement("option");
     option.value = voice;
-    option.textContent = `${displayVoiceName(voice)} (built-in)`;
+    option.textContent = displayVoiceName(voice);
     options.push(option);
   }
 
@@ -337,6 +342,23 @@ function showToast(message) {
   toastTimer = setTimeout(() => {
     elements.toast.hidden = true;
   }, 1300);
+}
+
+function hideGenerationNote() {
+  clearTimeout(generationNoteTimer);
+  generationNoteTimer = null;
+  elements.generationNote.hidden = true;
+  elements.generationNote.textContent = "";
+}
+
+function showGenerationNote(message, hideAfter = null) {
+  clearTimeout(generationNoteTimer);
+  generationNoteTimer = null;
+  elements.generationNote.textContent = message;
+  elements.generationNote.hidden = false;
+  if (Number.isFinite(hideAfter)) {
+    generationNoteTimer = setTimeout(hideGenerationNote, hideAfter);
+  }
 }
 
 function formatTime(samples) {
@@ -466,6 +488,11 @@ function updatePlayerControls() {
   elements.seek.disabled = !enabled;
   elements.play.disabled = !enabled;
   elements.download.disabled = !downloadReady || isExporting;
+  elements.download.title = isExporting
+    ? "Preparing WAV…"
+    : downloadReady
+      ? "Download WAV"
+      : "Available when generation finishes";
   elements.player.classList.toggle("is-empty", !enabled);
 }
 
@@ -522,6 +549,7 @@ function failWorker(error) {
   voiceRequest = null;
   ignoreNextStreamEnd = false;
   activeWorkerCustomVoices.clear();
+  hideGenerationNote();
   failedWorker?.terminate();
 
   pendingLoad?.reject(error);
@@ -541,7 +569,7 @@ function stopAtSessionLimit() {
 function getWorker() {
   if (worker) return worker;
 
-  worker = new Worker(new URL("./pocket/inference-worker.js?v=13", import.meta.url), {
+  worker = new Worker(new URL("./pocket/inference-worker.js?v=17", import.meta.url), {
     type: "module",
     name: "ava-pocket-tts",
   });
@@ -649,6 +677,14 @@ function getWorker() {
       updateTimeline();
       generationRequest?.resolve({ cancelled: false });
       generationRequest = null;
+      if (
+        elements.language.value === "french_24l"
+        && !queuedGeneration
+        && !generationTimer
+        && !isStopping
+      ) {
+        showGenerationNote("French reading ready.", 2500);
+      }
       return;
     }
 
@@ -1177,6 +1213,7 @@ async function generateSpeech(job) {
     }
     if (modelLoadRequest?.language === job.language) failWorker(error);
     console.error(error);
+    hideGenerationNote();
     acceptGenerationAudio = false;
     streamEnded = true;
     if (wantsPlayback) streamPlayer?.notifyStreamEnded();
@@ -1218,6 +1255,7 @@ function scheduleGeneration(delay = AUTO_GENERATE_DELAY) {
     worker?.postMessage({ type: "stop" });
   }
   clearSession();
+  hideGenerationNote();
   elements.status.hidden = true;
 
   const text = elements.text.value.trim();
@@ -1230,6 +1268,12 @@ function scheduleGeneration(delay = AUTO_GENERATE_DELAY) {
     showToast("Keep the text under 12,000 characters");
     updateActivityState();
     return;
+  }
+
+  if (elements.language.value === "french_24l") {
+    showGenerationNote(
+      "French generates more slowly. For uninterrupted playback, wait until the full reading is ready.",
+    );
   }
 
   generationTimer = setTimeout(() => {

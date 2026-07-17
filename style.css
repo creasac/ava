@@ -619,6 +619,13 @@ select option {
   fill: currentcolor;
 }
 
+.generation-note {
+  margin: -3px 56px 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
 .shortcuts {
   margin: 14px 0 0;
   color: var(--shortcut-text);
