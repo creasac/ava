@@ -731,17 +731,35 @@ footer a {
   outline: 0;
 }
 
-.record-button {
+.voice-source-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.record-button,
+.upload-button {
   height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 1;
   gap: 9px;
   color: var(--text);
   background: var(--record);
   border: 1px solid var(--record-line);
   border-radius: 11px;
   font-size: 0.76rem;
+}
+
+.upload-button svg {
+  width: 16px;
+  height: 16px;
+  fill: currentcolor;
+}
+
+.record-button:hover:not(:disabled):not(.is-recording),
+.upload-button:hover:not(:disabled) {
+  background: var(--control-hover);
 }
 
 .record-button.is-recording {

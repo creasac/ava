@@ -1,9 +1,9 @@
-const CACHE_NAME = "ava-shell-v41";
+const CACHE_NAME = "ava-shell-v42";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=25",
-  "./app.js?v=35",
+  "./style.css?v=26",
+  "./app.js?v=36",
   "./pocket/inference-worker.js?v=13",
   "./pocket/PCMPlayerWorklet.js?v=7",
   "./pocket/EventEmitter.js?v=1",

@@ -9,8 +9,9 @@ ava is a minimal Pocket TTS player: paste text, choose a language and voice, and
 Text changes start generation automatically after a 700 ms pause; selecting another
 language with text present restarts immediately. Audio builds silently in the
 background, while the current reading remains available for replay and seeking.
-Built-in voices appear in the voice selector. The microphone button records a
-3–10 second sample and creates a reusable cloned voice for the selected language.
+Built-in voices appear in the voice selector. The clone dialog records or uploads
+audio and creates a reusable cloned voice for the selected language; at least
+3 seconds are required and only the first 10 seconds are used.
 The last language and the selected voice for each language are remembered locally.
 The theme follows the operating system until the header toggle is used, then the
 chosen theme is remembered locally.
@@ -57,8 +58,9 @@ site data or browser storage pressure can remove them.
 
 ## Privacy
 
-Pasted text, microphone recordings, cloned voice states, and generated audio stay
-inside the browser. Microphone access is requested only when recording a clone.
+Pasted text, microphone recordings, uploaded audio, cloned voice states, and
+generated audio stay inside the browser. Microphone access is requested only
+when recording a clone.
 ava has no account, application backend, inference API, analytics, or cookies.
 
 The browser retrieves the site from Cloudflare Pages, ONNX Runtime from jsDelivr,
@@ -73,8 +75,8 @@ AudioWorklet, Cache Storage, and cross-origin isolation. Inference uses the devi
 CPU through ONNX Runtime Web, with at most four WASM threads; no GPU or cloud
 compute is used.
 
-Voice cloning additionally requires MediaRecorder, microphone permission, and
-IndexedDB.
+Voice cloning additionally requires IndexedDB and browser-supported audio
+decoding. Recording also requires MediaRecorder and microphone permission.
 
 Production hosting must use HTTPS and return the COOP and COEP headers defined in
 `_headers`.
@@ -85,8 +87,8 @@ Production hosting must use HTTPS and return the COOP and COEP headers defined i
 - Editing text discards the old audio and regenerates from the beginning
 - Reloading or closing the tab discards text, audio, and playback position
 - Forward seeking stops at the generated live edge
-- Voice clones require 3–10 seconds of clear, consented speech and are tied to the
-  language selected while recording
+- Voice clones require at least 3 seconds of clear, consented speech, use at most
+  the first 10 seconds, and are tied to the language selected while cloning
 - No speed control, in-app volume control, history, or word-level text/audio
   alignment
 - Full offline startup is not guaranteed because the runtime remains an external
@@ -104,9 +106,9 @@ Pasted text ─────────────────────┘  
                                                             ▼
                                                      AudioWorklet ─► speakers
 
-Microphone ─► Mimi encoder ─► cloned voice embedding ─► IndexedDB
-                                      │
-                                      └─► inference worker conditioning
+Microphone/audio file ─► Mimi encoder ─► cloned voice embedding ─► IndexedDB
+                                                 │
+                                                 └─► inference worker conditioning
 ```
 
 A dedicated worker loads four ONNX sessions and the selected built-in voice. It

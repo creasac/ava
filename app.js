@@ -79,6 +79,8 @@ const elements = {
   voiceName: document.querySelector("#voice-name"),
   record: document.querySelector("#record-button"),
   recordLabel: document.querySelector("#record-label"),
+  upload: document.querySelector("#upload-button"),
+  voiceUpload: document.querySelector("#voice-upload"),
   recordStatus: document.querySelector("#record-status"),
   toast: document.querySelector("#toast"),
 };
@@ -1293,8 +1295,9 @@ function seekBy(seconds) {
 
 function setRecordingUi(recording) {
   elements.record.classList.toggle("is-recording", recording);
-  elements.recordLabel.textContent = recording ? "Stop and clone" : "Start recording";
+  elements.recordLabel.textContent = recording ? "Stop and clone" : "Record";
   elements.voiceName.disabled = recording || isVoiceTask;
+  elements.upload.disabled = recording || isVoiceTask;
 }
 
 function stopMicrophone() {
@@ -1313,6 +1316,8 @@ function resetVoiceDialog() {
   recordingStartedAt = 0;
   isVoiceTask = false;
   elements.record.disabled = false;
+  elements.upload.disabled = false;
+  elements.voiceUpload.value = "";
   elements.voiceDialogClose.disabled = false;
   elements.language.disabled = false;
   elements.voice.disabled = false;
@@ -1346,13 +1351,21 @@ function resampleMonoAudio(audioBuffer) {
   return output;
 }
 
-async function decodeRecording(blob) {
+async function decodeVoiceAudio(blob) {
   const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextConstructor) throw new Error("Audio decoding is unavailable");
   const context = new AudioContextConstructor();
   try {
-    const buffer = await context.decodeAudioData(await blob.arrayBuffer());
-    return resampleMonoAudio(buffer).slice(0, MAX_VOICE_SECONDS * SAMPLE_RATE);
+    let buffer;
+    try {
+      buffer = await context.decodeAudioData(await blob.arrayBuffer());
+    } catch {
+      throw new Error("This audio file could not be decoded");
+    }
+    return {
+      audio: resampleMonoAudio(buffer).slice(0, MAX_VOICE_SECONDS * SAMPLE_RATE),
+      durationSeconds: buffer.duration,
+    };
   } finally {
     await context.close().catch(() => {});
   }
@@ -1372,25 +1385,28 @@ async function stopSpeechForVoiceTask() {
   if (pendingGeneration) await pendingGeneration.catch(() => {});
 }
 
-async function cloneRecordedVoice(blob, durationSeconds) {
+async function cloneVoiceFromBlob(blob, durationHint = null) {
   const name = elements.voiceName.value.trim();
   if (!name) throw new Error("Give the voice a name");
-  if (durationSeconds < MIN_VOICE_SECONDS) {
-    throw new Error(`Record at least ${MIN_VOICE_SECONDS} seconds`);
-  }
 
   isVoiceTask = true;
   elements.record.disabled = true;
+  elements.upload.disabled = true;
   elements.voiceDialogClose.disabled = true;
   elements.language.disabled = true;
   elements.voice.disabled = true;
   elements.clone.disabled = true;
   setRecordingUi(false);
   updateActivityState();
-  elements.recordStatus.textContent = "Preparing recording…";
+  elements.recordStatus.textContent = "Preparing audio…";
 
   const language = elements.language.value;
-  const audio = await decodeRecording(blob);
+  const decoded = await decodeVoiceAudio(blob);
+  const durationSeconds = durationHint ?? decoded.durationSeconds;
+  if (durationSeconds < MIN_VOICE_SECONDS) {
+    throw new Error(`Use at least ${MIN_VOICE_SECONDS} seconds of audio`);
+  }
+  const audio = decoded.audio;
   await stopSpeechForVoiceTask();
   elements.recordStatus.textContent = `Loading ${languageLabel(language)}…`;
   await ensureModel(language);
@@ -1437,11 +1453,12 @@ async function stopRecordingAndClone() {
   mediaRecorder = null;
 
   try {
-    await cloneRecordedVoice(blob, durationSeconds);
+    await cloneVoiceFromBlob(blob, durationSeconds);
   } catch (error) {
     console.error(error);
     isVoiceTask = false;
     elements.record.disabled = false;
+    elements.upload.disabled = false;
     elements.voiceDialogClose.disabled = false;
     elements.language.disabled = false;
     elements.voice.disabled = false;
@@ -1449,6 +1466,34 @@ async function stopRecordingAndClone() {
     setRecordingUi(false);
     updateActivityState();
     elements.recordStatus.textContent = error.message || "Voice cloning failed";
+  }
+}
+
+async function cloneUploadedVoice(file) {
+  if (!file) return;
+  if (!elements.voiceName.value.trim()) {
+    elements.recordStatus.textContent = "Give the voice a name first.";
+    elements.voiceName.focus();
+    elements.voiceUpload.value = "";
+    return;
+  }
+
+  try {
+    await cloneVoiceFromBlob(file);
+  } catch (error) {
+    console.error(error);
+    isVoiceTask = false;
+    elements.record.disabled = false;
+    elements.upload.disabled = false;
+    elements.voiceDialogClose.disabled = false;
+    elements.language.disabled = false;
+    elements.voice.disabled = false;
+    elements.clone.disabled = false;
+    setRecordingUi(false);
+    updateActivityState();
+    elements.recordStatus.textContent = error.message || "Voice cloning failed";
+  } finally {
+    elements.voiceUpload.value = "";
   }
 }
 
@@ -1689,9 +1734,17 @@ elements.record.addEventListener("click", () => {
   }
 });
 
+elements.upload.addEventListener("click", () => elements.voiceUpload.click());
+elements.voiceUpload.addEventListener("change", () => {
+  void cloneUploadedVoice(elements.voiceUpload.files?.[0]);
+});
+
 elements.voiceDialog.addEventListener("close", () => {
   if (mediaRecorder?.state === "recording") mediaRecorder.stop();
   resetVoiceDialog();
+});
+elements.voiceDialog.addEventListener("cancel", (event) => {
+  if (isVoiceTask) event.preventDefault();
 });
 
 elements.seek.addEventListener("pointerdown", () => {

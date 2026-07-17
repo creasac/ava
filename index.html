@@ -14,7 +14,7 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
       } catch {}
     </script>
-    <link rel="stylesheet" href="./style.css?v=25" />
+    <link rel="stylesheet" href="./style.css?v=26" />
   </head>
   <body>
     <header class="header">
@@ -140,20 +140,29 @@
           <h2>Clone a voice</h2>
           <button class="dialog-close" id="voice-dialog-close" value="cancel" aria-label="Close">×</button>
         </div>
-        <p>Record 3–10 seconds of a clear, consented voice.</p>
+        <p>Record or upload a clear, consented voice. The first 10 seconds are used.</p>
         <label class="voice-name-field">
           <span>Name</span>
           <input id="voice-name" maxlength="40" autocomplete="off" value="My voice" />
         </label>
-        <button class="record-button" id="record-button" type="button">
-          <span class="record-dot" aria-hidden="true"></span>
-          <span id="record-label">Start recording</span>
-        </button>
+        <div class="voice-source-actions">
+          <button class="record-button" id="record-button" type="button">
+            <span class="record-dot" aria-hidden="true"></span>
+            <span id="record-label">Record</span>
+          </button>
+          <button class="upload-button" id="upload-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M11 16a1 1 0 1 0 2 0V7.41l2.3 2.3a1 1 0 0 0 1.4-1.42l-4-4a1 1 0 0 0-1.4 0l-4 4a1 1 0 0 0 1.4 1.42l2.3-2.3V16Zm-5 2a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2a1 1 0 1 0-2 0v1H7v-1a1 1 0 0 0-1-1Z" />
+            </svg>
+            <span>Upload</span>
+          </button>
+          <input id="voice-upload" type="file" accept="audio/*" hidden />
+        </div>
         <p class="record-status" id="record-status" role="status" aria-live="polite">Stored only in this browser.</p>
       </form>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="./app.js?v=35"></script>
+    <script type="module" src="./app.js?v=36"></script>
   </body>
 </html>
