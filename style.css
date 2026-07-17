@@ -256,6 +256,7 @@ a:focus-visible {
 .model-storage {
   position: relative;
   flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .model-storage-trigger {
@@ -289,8 +290,8 @@ a:focus-visible {
 .model-storage-panel {
   position: absolute;
   z-index: 12;
-  top: calc(100% + 6px);
   right: 0;
+  bottom: calc(100% + 6px);
   width: min(330px, calc(100vw - 32px));
   padding: 14px;
   background: var(--floating);
@@ -366,7 +367,8 @@ main {
 }
 
 .composer {
-  overflow: hidden;
+  position: relative;
+  z-index: 1;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 20px;

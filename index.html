@@ -14,7 +14,7 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
       } catch {}
     </script>
-    <link rel="stylesheet" href="./style.css?v=27" />
+    <link rel="stylesheet" href="./style.css?v=29" />
   </head>
   <body>
     <header class="header">
@@ -28,21 +28,6 @@
             <path id="theme-icon-path" d="M12 3a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0V4a1 1 0 0 1 1-1Zm0 5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm9 4a1 1 0 0 1-1 1h-1a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1ZM6 12a1 1 0 0 1-1 1H4a1 1 0 1 1 0-2h1a1 1 0 0 1 1 1Zm12.36-6.36a1 1 0 0 1 0 1.42l-.71.7a1 1 0 0 1-1.41-1.41l.7-.71a1 1 0 0 1 1.42 0ZM7.76 16.24a1 1 0 0 1 0 1.41l-.7.71a1 1 0 0 1-1.42-1.42l.71-.7a1 1 0 0 1 1.41 0Zm10.6 2.12a1 1 0 0 1-1.42 0l-.7-.71a1 1 0 0 1 1.41-1.41l.71.7a1 1 0 0 1 0 1.42ZM7.76 7.76a1 1 0 0 1-1.41 0l-.71-.7a1 1 0 0 1 1.42-1.42l.7.71a1 1 0 0 1 0 1.41ZM12 18a1 1 0 0 1 1 1v1a1 1 0 1 1-2 0v-1a1 1 0 0 1 1-1Z" />
           </svg>
         </button>
-        <details class="model-storage" id="model-storage">
-          <summary class="model-storage-trigger" aria-label="Manage local storage">
-            <span class="model-state" id="model-state">Runs locally</span>
-          </summary>
-          <section class="model-storage-panel" aria-label="Local storage">
-            <h2>Stored models</h2>
-            <div class="model-cache-list" id="model-cache-list" aria-live="polite">
-              <p class="model-cache-empty">Checking storage…</p>
-            </div>
-            <h2 class="storage-subheading">Cloned voices</h2>
-            <div class="model-cache-list" id="cloned-voice-list" aria-live="polite">
-              <p class="model-cache-empty">Checking storage…</p>
-            </div>
-          </section>
-        </details>
       </div>
     </header>
 
@@ -81,6 +66,21 @@
                 </svg>
               </button>
             </div>
+            <details class="model-storage" id="model-storage">
+              <summary class="model-storage-trigger" aria-label="Manage local storage">
+                <span class="model-state" id="model-state">Runs locally</span>
+              </summary>
+              <section class="model-storage-panel" aria-label="Local storage">
+                <h2>Stored models</h2>
+                <div class="model-cache-list" id="model-cache-list" aria-live="polite">
+                  <p class="model-cache-empty">Checking storage…</p>
+                </div>
+                <h2 class="storage-subheading">Cloned voices</h2>
+                <div class="model-cache-list" id="cloned-voice-list" aria-live="polite">
+                  <p class="model-cache-empty">Checking storage…</p>
+                </div>
+              </section>
+            </details>
           </div>
           <section class="player is-empty" id="player" aria-label="Audio player" aria-busy="false">
             <div class="player-bar">
