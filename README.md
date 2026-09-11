@@ -4,6 +4,8 @@ ava is a minimal Pocket TTS player: paste text, choose a language and voice, and
 
 **Live:** [ava.creasac.com](https://ava.creasac.com)
 
+<img width="1120" height="1121" alt="ava" src="https://github.com/user-attachments/assets/10532485-66d8-44f8-ad37-48e92b8d73ed" />
+
 ## Use
 
 Text changes start generation automatically after a 700 ms pause; selecting another
