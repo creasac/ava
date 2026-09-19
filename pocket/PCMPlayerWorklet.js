@@ -267,12 +267,12 @@ export class PCMPlayerWorklet extends EventEmitter {
                 outputChannel[i] = 0;
               }
 
-              // The remaining samples have now drained. An ended stream is
-              // complete; a live stream must rebuild its buffer before resuming.
+              // Finish an ended stream. Keep a live stream ready to consume the
+              // next samples immediately: waiting for another full buffer can
+              // hold an available batch while generation is still catching up.
               if (this.streamEnded) {
                 this.finishPlayback();
               } else {
-                this.isPlaying = false;
                 // Request more data urgently
                 this.port.postMessage({
                   type: 'underrun',

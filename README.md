@@ -19,8 +19,10 @@ The theme follows the operating system until the header toggle is used, then the
 chosen theme is remembered locally.
 When generation finishes, the player can download the completed reading as a
 16-bit mono WAV without regenerating it.
-Live playback builds about 1.2 seconds of audio before starting or resuming after
-buffering. Completed readings shorter than that play without waiting for more audio.
+Live playback starts with about 220 ms of buffered audio. If generation falls
+behind playback, the player resumes as soon as more audio arrives; it does not
+wait to refill a larger buffer. For uninterrupted playback on a slower device,
+let the reading finish generating first.
 
 | Key | Action |
 | --- | --- |
