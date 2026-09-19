@@ -4,12 +4,16 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 const playerSource = await readFile(new URL('../pocket/PCMPlayerWorklet.js', import.meta.url), 'utf8');
+const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+const playerConstruction = appSource.match(/new PCMPlayerWorklet\(audioContext,\s*(\{[^}]+\})\)/);
+assert.ok(playerConstruction, 'test the player options actually used by the app');
+const playerOptions = vm.runInNewContext(`(${playerConstruction[1]})`);
 const sampleRate = 24000;
 const quantum = 128;
 
 // Execute the actual wrapper and its generated processor. Message delivery is
 // queued in both directions, as with MessagePort, including initial capacity.
-async function createPlayer(minBufferBeforePlaybackMs = 1200) {
+async function createPlayer() {
   const messages = [];
   const deliveries = [];
   const events = [];
@@ -74,7 +78,7 @@ async function createPlayer(minBufferBeforePlaybackMs = 1200) {
       + '\nglobalThis.PCMPlayerWorklet = PCMPlayerWorklet;',
     context
   );
-  const player = new context.PCMPlayerWorklet(audioContext, { minBufferBeforePlaybackMs });
+  const player = new context.PCMPlayerWorklet(audioContext, playerOptions);
   await player.initPromise;
 
   function flushMessages() {
@@ -122,14 +126,15 @@ function drain(harness, limit = 20000) {
   assert.fail('playback must complete');
 }
 
-async function simulateBatches(minBufferMs, generationSpeed) {
-  const harness = await createPlayer(minBufferMs);
+async function simulateBatches(generationSpeed, arrivalJitter = [0, 0, 0, 0]) {
+  const harness = await createPlayer();
   const firstBatch = 5760; // 240 ms
   const normalBatch = 23040; // 960 ms
   const expected = samples(firstBatch + normalBatch * 4);
   let offset = 0;
   let nextArrival = 0;
   let batch = 0;
+  let played = 0;
   const output = [];
 
   for (let elapsed = 0; elapsed < sampleRate * 15; elapsed += quantum) {
@@ -138,55 +143,63 @@ async function simulateBatches(minBufferMs, generationSpeed) {
       harness.player.playAudio(expected.slice(offset, offset + length));
       offset += length;
       batch++;
-      nextArrival += normalBatch / generationSpeed;
+      nextArrival += normalBatch / generationSpeed + (arrivalJitter[batch - 1] ?? 0) * sampleRate;
       if (batch === 5) harness.player.notifyStreamEnded();
     }
-    output.push(...harness.render());
+    harness.flushMessages();
+    const available = harness.processor.getBufferedSamples();
+    const frame = harness.render();
+    const expectedSamples = Math.min(quantum, available);
+    assertAudio(frame, expected.slice(played, played + expectedSamples));
+    played += expectedSamples;
+    output.push(...frame);
     if (harness.events.some(event => event.type === 'audioEnded')) break;
   }
 
   assert.equal(batch, 5);
   assert.equal(harness.events.filter(event => event.type === 'audioEnded').length, 1);
   assertAudio(output, expected);
-  const first = output.findIndex(value => value !== 0);
-  const last = output.findLastIndex(value => value !== 0);
-  const silentSamples = output.slice(first, last + 1).filter(value => value === 0).length;
-  return { silentSamples, underruns: harness.player.metrics.underruns };
 }
 
-for (const speed of [1, 2]) {
-  test(`1200 ms buffering removes the startup gap with generation at ${speed}x playback`, async () => {
-    const oldBuffer = await simulateBatches(220, speed);
-    const newBuffer = await simulateBatches(1200, speed);
-    assert.equal(oldBuffer.silentSamples, speed === 1 ? 17280 : 5760);
-    assert.ok(oldBuffer.underruns > 0);
-    assert.equal(newBuffer.silentSamples, 0);
-    assert.equal(newBuffer.underruns, 0);
+test('app playback starts with the first 240 ms audio batch', async () => {
+  const harness = await createPlayer();
+  const expected = samples(5760);
+  harness.player.playAudio(expected);
+  assertAudio(harness.render(), expected.slice(0, quantum));
+  harness.player.notifyStreamEnded();
+  assertAudio(drain(harness), expected.slice(quantum));
+});
+
+for (const speed of [0.5, 0.8, 1, 2]) {
+  test(`generation at ${speed}x plays available PCM without added waits and preserves every sample`, async () => {
+    await simulateBatches(speed);
   });
 }
 
-test('underrun waits for a fresh minimum buffer and preserves sample order', async () => {
-  const harness = await createPlayer();
-  const expected = samples(57600);
-  harness.player.playAudio(expected.slice(0, 28800));
-  const output = [];
-  for (let frame = 0; frame < 225; frame++) output.push(...harness.render());
-  assertSilence(harness.render());
-  assert.equal(harness.processor.isPlaying, false);
-  assert.equal(harness.player.metrics.underruns, 1);
-
-  harness.player.playAudio(expected.slice(28800, 34560));
-  for (let frame = 0; frame < 30; frame++) assertSilence(harness.render());
-  assert.equal(harness.player.metrics.underruns, 1, 'one report per starvation, not per silent frame');
-  assert.equal(harness.processor.getBufferedSamples(), 5760);
-
-  harness.player.playAudio(expected.slice(34560));
-  harness.flushMessages();
-  assert.equal(harness.processor.isPlaying, true);
-  harness.player.notifyStreamEnded();
-  output.push(...drain(harness));
-  assertAudio(output, expected);
+test('jittered arrivals resume immediately and preserve every sample', async () => {
+  await simulateBatches(1, [0.4, -0.3, 1.3, -0.6]);
 });
+
+for (const resumedLength of [128, 23040]) {
+  test(`after starvation, ${resumedLength} new samples resume next quantum without waiting for another batch`, async () => {
+    const harness = await createPlayer();
+    const initialLength = 28800;
+    const expected = samples(initialLength + resumedLength);
+    harness.player.playAudio(expected.slice(0, initialLength));
+    const output = [];
+    for (let frame = 0; frame < initialLength / quantum; frame++) output.push(...harness.render());
+    for (let frame = 0; frame < 30; frame++) assertSilence(harness.render());
+    assert.ok(harness.player.metrics.underruns > 0);
+
+    harness.player.playAudio(expected.slice(initialLength));
+    const resumedFrame = harness.render();
+    assertAudio(resumedFrame, expected.slice(initialLength, initialLength + quantum));
+    output.push(...resumedFrame);
+    harness.player.notifyStreamEnded();
+    output.push(...drain(harness));
+    assertAudio(output, expected);
+  });
+}
 
 for (const initiallyPlaying of [false, true]) {
   test(`end of stream drains a short tail ${initiallyPlaying ? 'after starvation' : 'before initial playback'}`, async () => {
@@ -197,30 +210,34 @@ for (const initiallyPlaying of [false, true]) {
     if (initiallyPlaying) {
       harness.player.playAudio(expected.slice(0, initialLength));
       for (let frame = 0; frame < 226; frame++) output.push(...harness.render());
-      assert.equal(harness.processor.isPlaying, false);
     }
     harness.player.playAudio(expected.slice(initialLength));
-    assertSilence(harness.render());
+    const firstTailFrame = harness.render();
+    if (initiallyPlaying) {
+      assertAudio(firstTailFrame, expected.slice(initialLength, initialLength + quantum));
+      output.push(...firstTailFrame);
+    } else {
+      assertSilence(firstTailFrame);
+    }
     harness.player.notifyStreamEnded();
     output.push(...drain(harness));
     assertAudio(output, expected);
-    assert.equal(harness.player.metrics.underruns, initiallyPlaying ? 1 : 0);
+    assert.equal(harness.player.metrics.underruns > 0, initiallyPlaying);
     for (let frame = 0; frame < 20; frame++) assertSilence(harness.render());
     assert.equal(harness.events.filter(event => event.type === 'audioEnded').length, 1);
   });
 }
 
 for (const initiallyPlaying of [false, true]) {
-  test(`empty end of stream completes ${initiallyPlaying ? 'during rebuffering' : 'without playback'}`, async () => {
+  test(`empty end of stream completes ${initiallyPlaying ? 'after starvation' : 'without playback'}`, async () => {
     const harness = await createPlayer();
     if (initiallyPlaying) {
       harness.player.playAudio(samples(28800));
       for (let frame = 0; frame < 226; frame++) harness.render();
     }
-    assert.equal(harness.processor.isPlaying, false);
     assert.equal(harness.processor.getBufferedSamples(), 0);
     harness.player.notifyStreamEnded();
-    harness.flushMessages();
+    assertSilence(harness.render());
     assert.equal(harness.events.filter(event => event.type === 'audioEnded').length, 1);
     for (let frame = 0; frame < 20; frame++) assertSilence(harness.render());
     assert.equal(harness.events.filter(event => event.type === 'audioEnded').length, 1);

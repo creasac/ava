@@ -725,9 +725,8 @@ async function ensurePlayer() {
     if (!AudioContextConstructor) throw new Error("AudioWorklet is unavailable in this browser");
 
     audioContext = new AudioContextConstructor({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" });
-    const { PCMPlayerWorklet } = await import("./pocket/PCMPlayerWorklet.js?v=8");
-    // Cover the first 240 ms batch plus a normal 960 ms batch before starting.
-    streamPlayer = new PCMPlayerWorklet(audioContext, { minBufferBeforePlaybackMs: 1200 });
+    const { PCMPlayerWorklet } = await import("./pocket/PCMPlayerWorklet.js?v=9");
+    streamPlayer = new PCMPlayerWorklet(audioContext, { minBufferBeforePlaybackMs: 220 });
     await streamPlayer.initPromise;
 
     streamPlayer.addEventListener("firstPlayback", () => {
