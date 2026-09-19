@@ -2,6 +2,8 @@
 // Adapted for ava from KevinAHM/pocket-tts-web (Apache-2.0).
 // ava changes: remote model caching, multilingual built-in and cloned voices,
 // lazy voice-cloning encoder loading, and streamed Float32 audio chunks.
+import { splitTextIntoChunks } from "./text-chunking.js?v=1";
+
 console.log("Pocket TTS Worker Starting...");
 self.postMessage({ type: "status", status: "Worker Thread Started", state: "idle" });
 
@@ -46,7 +48,7 @@ const MODEL_STEMS = {
     mimi_decoder: "mimi_decoder_int8.onnx",
 };
 const DEBUG_LOGS = false;
-const CHUNK_GAP_SEC = 0.25;
+const SENTENCE_GAP_SEC = 0.25;
 const MAX_FRAMES = 500;
 const LSD_STEPS = 1;
 const RESET_FLOW_STATE_EACH_CHUNK = true;
@@ -504,77 +506,16 @@ function prepareTextPrompt(text) {
     return { text: prompt, framesAfterEos };
 }
 
-const SENTENCE_SPLIT_RE = /[^.!?]+[.!?]+|[^.!?]+$/g;
-
-function splitTextIntoSentences(text) {
-    const matches = text.match(SENTENCE_SPLIT_RE);
-    if (!matches) return [];
-    return matches.map((sentence) => sentence.trim()).filter(Boolean);
-}
-
-function splitTokenIdsIntoChunks(tokenIds, maxTokens) {
-    const chunks = [];
-    for (let i = 0; i < tokenIds.length; i += maxTokens) {
-        const chunkText = tokenizerProcessor.decodeIds(tokenIds.slice(i, i + maxTokens)).trim();
-        if (chunkText) {
-            chunks.push(chunkText);
-        }
-    }
-    return chunks;
-}
-
 function splitIntoBestSentences(text) {
     const prepared = prepareTextPrompt(text);
-    if (!prepared.text) {
-        return { chunks: [], framesAfterEos: prepared.framesAfterEos };
-    }
-
-    const sentences = splitTextIntoSentences(prepared.text);
-    if (!sentences.length) {
-        return { chunks: [prepared.text], framesAfterEos: prepared.framesAfterEos };
-    }
-
-    const chunks = [];
-    let currentChunk = "";
-
-    for (const sentenceText of sentences) {
-        const sentenceTokenIds = tokenizerProcessor.encodeIds(sentenceText);
-        const sentenceTokens = sentenceTokenIds.length;
-
-        if (sentenceTokens > currentMaxTokenPerChunk) {
-            if (currentChunk) {
-                chunks.push(currentChunk.trim());
-                currentChunk = "";
-            }
-            const splitChunks = splitTokenIdsIntoChunks(sentenceTokenIds, currentMaxTokenPerChunk);
-            for (const splitChunk of splitChunks) {
-                if (splitChunk) {
-                    chunks.push(splitChunk.trim());
-                }
-            }
-            continue;
-        }
-
-        if (!currentChunk) {
-            currentChunk = sentenceText;
-            continue;
-        }
-
-        const combined = `${currentChunk} ${sentenceText}`;
-        const combinedTokens = tokenizerProcessor.encodeIds(combined).length;
-        if (combinedTokens > currentMaxTokenPerChunk) {
-            chunks.push(currentChunk.trim());
-            currentChunk = sentenceText;
-        } else {
-            currentChunk = combined;
-        }
-    }
-
-    if (currentChunk) {
-        chunks.push(currentChunk.trim());
-    }
-
-    return { chunks, framesAfterEos: prepared.framesAfterEos };
+    return {
+        chunks: splitTextIntoChunks(prepared.text, {
+            tokenizer: tokenizerProcessor,
+            maxTokens: currentMaxTokenPerChunk,
+            language: currentLanguage,
+        }),
+        framesAfterEos: prepared.framesAfterEos,
+    };
 }
 
 function precomputeFlowBuffers() {
@@ -1015,7 +956,7 @@ async function runGenerationPipeline(voiceName, chunks, framesAfterEos) {
             mimiState = initStateFromManifest(bundleMetadata.mimi_state_manifest);
         }
 
-        const chunkText = chunks[chunkIdx];
+        const chunkText = chunks[chunkIdx].text;
         let isFirstAudioChunkOfTextChunk = true;
         const tokenIds = tokenizerProcessor.encodeIds(chunkText);
         const textInput = createTensor(
@@ -1186,8 +1127,9 @@ async function runGenerationPipeline(voiceName, chunks, framesAfterEos) {
             chunkEnded = isGenerating;
         }
 
-        if (chunkEnded && isGenerating && chunkIdx < chunks.length - 1) {
-            const gapSamples = Math.max(1, Math.floor(CHUNK_GAP_SEC * currentSampleRate));
+        if (chunkEnded && isGenerating && chunkIdx < chunks.length - 1
+            && chunks[chunkIdx].boundary === "sentence") {
+            const gapSamples = Math.max(1, Math.floor(SENTENCE_GAP_SEC * currentSampleRate));
             const silence = new Float32Array(gapSamples);
             postMessage({
                 type: "audio_chunk",

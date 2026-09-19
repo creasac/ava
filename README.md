@@ -19,6 +19,8 @@ The theme follows the operating system until the header toggle is used, then the
 chosen theme is remembered locally.
 When generation finishes, the player can download the completed reading as a
 16-bit mono WAV without regenerating it.
+Live playback builds about 1.2 seconds of audio before starting or resuming after
+buffering. Completed readings shorter than that play without waiting for more audio.
 
 | Key | Action |
 | --- | --- |
@@ -129,12 +131,29 @@ python3 dev_server.py 8000
 Open `http://localhost:8000`. The development server supplies the isolation headers
 required for multithreaded WASM. There is no install or build step.
 
+## Audio regression tests
+
+With Node.js 22 or later:
+
+```bash
+node --test scripts/*.test.mjs
+```
+
+The chunking tests use Ava's actual pinned English tokenizer. The first run
+downloads its approximately 59 KB model to the system temporary directory and
+verifies its SHA-256. For an offline run, set `AVA_TOKENIZER_MODEL` to a local copy
+of that tokenizer model. Playback tests simulate audio arrival and exercise the
+actual AudioWorklet processor and queue, including underruns, short endings, and
+seeking. Worker tests verify which text boundaries receive an added pause using
+stub model sessions; they do not measure speech quality.
+
 ## Project structure
 
 - `index.html` — interface and player
 - `style.css` — responsive presentation
 - `app.js` — application controller
 - `pocket/inference-worker.js` — ONNX model integration
+- `pocket/text-chunking.js` — token-budgeted sentence and whole-word boundaries
 - `pocket/PCMPlayerWorklet.js` — audio worklet wrapper
 - `sw.js` — shell caching and updates
 - `dev_server.py` — local static server with the required headers
