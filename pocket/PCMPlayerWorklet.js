@@ -92,7 +92,9 @@ export class PCMPlayerWorklet extends EventEmitter {
                   if (e.data.sessionId === this.sessionId) {
                     this.streamEnded = true;
                     const buffered = this.getBufferedSamples();
-                    if (!this.isPlaying && buffered > 0) {
+                    if (!this.isPlaying && buffered === 0) {
+                      this.finishPlayback();
+                    } else if (!this.isPlaying && buffered > 0) {
                       this.isPlaying = true;
                       this.port.postMessage({
                         type: 'playback-started',
@@ -168,6 +170,18 @@ export class PCMPlayerWorklet extends EventEmitter {
               return this.writePos - this.readPos;
             } else {
               return this.bufferSize - this.readPos + this.writePos;
+            }
+          }
+
+          finishPlayback() {
+            this.isPlaying = false;
+            this.streamEnded = false;
+            if (!this.playbackCompleteReported) {
+              this.port.postMessage({
+                type: 'playback-complete',
+                sessionId: this.sessionId
+              });
+              this.playbackCompleteReported = true;
             }
           }
 
@@ -253,18 +267,12 @@ export class PCMPlayerWorklet extends EventEmitter {
                 outputChannel[i] = 0;
               }
 
-              // Check for playback complete
-              if (this.streamEnded && buffered === 0) {
-                if (!this.playbackCompleteReported) {
-                  this.port.postMessage({
-                    type: 'playback-complete',
-                    sessionId: this.sessionId
-                  });
-                  this.playbackCompleteReported = true;
-                }
-                this.isPlaying = false;
-                this.streamEnded = false;
+              // The remaining samples have now drained. An ended stream is
+              // complete; a live stream must rebuild its buffer before resuming.
+              if (this.streamEnded) {
+                this.finishPlayback();
               } else {
+                this.isPlaying = false;
                 // Request more data urgently
                 this.port.postMessage({
                   type: 'underrun',
