@@ -19,10 +19,13 @@ The theme follows the operating system until the header toggle is used, then the
 chosen theme is remembered locally.
 When generation finishes, the player can download the completed reading as a
 16-bit mono WAV without regenerating it.
-Live playback starts with about 220 ms of buffered audio. If generation falls
-behind playback, the player resumes as soon as more audio arrives; it does not
-wait to refill a larger buffer. For uninterrupted playback on a slower device,
-let the reading finish generating first.
+Press Play once. While the reading is still generating, the player shows
+“Buffering…” and automatically starts when enough audio is ready. It estimates
+the head start from the text length and the actual generation speed on this
+device, with a safety margin. Slower generation and longer readings need a longer
+initial wait. Press Pause to cancel waiting. Completed readings play immediately.
+This does not speed up synthesis or guarantee uninterrupted playback if the
+device slows down substantially after playback starts.
 
 | Key | Action |
 | --- | --- |
@@ -41,8 +44,8 @@ let the reading finish generating first.
 | Spanish | Lola |
 
 French uses the substantially larger 24-layer bundle. It works locally like the
-other languages, but generation is much slower on typical CPUs; for uninterrupted
-playback, let the reading finish generating first.
+other languages, but generation is much slower on typical CPUs, so the initial
+buffering wait can be longer.
 
 Each language has one built-in voice. Cloned voices are language-specific.
 
@@ -144,10 +147,12 @@ node --test scripts/*.test.mjs
 The chunking tests use Ava's actual pinned English tokenizer. The first run
 downloads its approximately 59 KB model to the system temporary directory and
 verifies its SHA-256. For an offline run, set `AVA_TOKENIZER_MODEL` to a local copy
-of that tokenizer model. Playback tests simulate audio arrival and exercise the
-actual AudioWorklet processor and queue, including underruns, short endings, and
-seeking. Worker tests verify which text boundaries receive an added pause using
-stub model sessions; they do not measure speech quality.
+of that tokenizer model. Playback tests run the app's Play/Pause, seek, and startup
+buffering logic with the actual AudioWorklet processor and queue. Timed PCM
+arrivals cover slow generation, uneven arrivals, underestimated reading length,
+long queues, short endings, and cancellation. These simulations do not replace
+listening in a browser. Worker tests verify which text boundaries receive an
+added pause using stub model sessions; they do not measure speech quality.
 
 ## Project structure
 

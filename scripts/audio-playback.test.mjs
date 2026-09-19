@@ -1,113 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import vm from 'node:vm';
-
-const playerSource = await readFile(new URL('../pocket/PCMPlayerWorklet.js', import.meta.url), 'utf8');
-const appSource = await readFile(new URL('../app.js', import.meta.url), 'utf8');
-const playerConstruction = appSource.match(/new PCMPlayerWorklet\(audioContext,\s*(\{[^}]+\})\)/);
-assert.ok(playerConstruction, 'test the player options actually used by the app');
-const playerOptions = vm.runInNewContext(`(${playerConstruction[1]})`);
-const sampleRate = 24000;
-const quantum = 128;
-
-// Execute the actual wrapper and its generated processor. Message delivery is
-// queued in both directions, as with MessagePort, including initial capacity.
-async function createPlayer() {
-  const messages = [];
-  const deliveries = [];
-  const events = [];
-  let Processor;
-  let processor;
-  let hostPort;
-  const context = vm.createContext({
-    console,
-    Float32Array,
-    Int16Array,
-    currentTime: 0,
-    EventEmitter: class {
-      emit(type, detail) { events.push({ type, detail }); }
-    },
-    Blob: class {
-      constructor(parts) { this.source = parts.join(''); }
-    },
-    URL: {
-      createObjectURL(blob) { return blob; },
-      revokeObjectURL() {}
-    },
-    AudioWorkletProcessor: class {
-      constructor() {
-        this.port = {
-          postMessage(message) {
-            messages.push(message);
-            deliveries.push(() => hostPort.onmessage({ data: message }));
-          }
-        };
-      }
-    },
-    registerProcessor(name, constructor) { Processor = constructor; },
-    AudioWorkletNode: class {
-      constructor() {
-        hostPort = this.port = {
-          postMessage(message) {
-            deliveries.push(() => processor.port.onmessage({ data: message }));
-          }
-        };
-        processor = new Processor();
-      }
-      connect() {}
-    }
-  });
-  const audioContext = {
-    sampleRate,
-    currentTime: 0,
-    destination: {},
-    createGain() {
-      return {
-        gain: { value: 1, cancelScheduledValues() {}, setValueAtTime() {} },
-        connect() {}
-      };
-    },
-    createAnalyser() { return {}; },
-    audioWorklet: {
-      async addModule(blob) { vm.runInContext(blob.source, context); }
-    }
-  };
-  vm.runInContext(
-    playerSource.replace(/^import .*\n/, '').replace('export class PCMPlayerWorklet', 'class PCMPlayerWorklet')
-      + '\nglobalThis.PCMPlayerWorklet = PCMPlayerWorklet;',
-    context
-  );
-  const player = new context.PCMPlayerWorklet(audioContext, playerOptions);
-  await player.initPromise;
-
-  function flushMessages() {
-    let count = 0;
-    while (deliveries.length > 0) {
-      assert.ok(++count < 10000, 'message queue must settle');
-      deliveries.shift()();
-    }
-  }
-
-  function render() {
-    flushMessages();
-    const output = new Float32Array(quantum);
-    processor.process([], [[output]], {});
-    context.currentTime += quantum / sampleRate;
-    audioContext.currentTime = context.currentTime;
-    flushMessages();
-    return output;
-  }
-
-  flushMessages();
-  return { player, processor, messages, events, flushMessages, render };
-}
-
-// Nonzero, exactly representable PCM values make any added silence and missing,
-// repeated, or reordered samples observable without a model or audio device.
-function samples(length, offset = 0) {
-  return Float32Array.from({ length }, (_, i) => (offset + i + 1) / 1048576);
-}
+import { createPlayer, sampleRate, quantum, samples } from './helpers/audio-harness.mjs';
 
 function assertSilence(output) {
   assert.ok(output.every(value => value === 0));
@@ -161,7 +54,7 @@ async function simulateBatches(generationSpeed, arrivalJitter = [0, 0, 0, 0]) {
   assertAudio(output, expected);
 }
 
-test('app playback starts with the first 240 ms audio batch', async () => {
+test('low-level worklet starts with the first 240 ms audio batch', async () => {
   const harness = await createPlayer();
   const expected = samples(5760);
   harness.player.playAudio(expected);
