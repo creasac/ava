@@ -125,6 +125,8 @@ let isExporting = false;
 let ignoreNextStreamEnd = false;
 let isPlaying = false;
 let wantsPlayback = false;
+let playbackQueued = false;
+let generationStartedAt = 0;
 let isSeeking = false;
 let firstChunkSeen = false;
 let memoryLimitReached = false;
@@ -525,12 +527,16 @@ function updateTimeline() {
 }
 
 function updatePlayState() {
+  const requested = wantsPlayback && audioContext?.state === "running";
   const playing = wantsPlayback && isPlaying && audioContext?.state === "running";
+  const buffering = requested && !playbackQueued;
   elements.playbackIconPath.setAttribute(
     "d",
-    playing ? "M8 7h3v10H8zM13 7h3v10h-3z" : "m9 7 8 5-8 5z",
+    requested ? "M8 7h3v10H8zM13 7h3v10h-3z" : "m9 7 8 5-8 5z",
   );
-  elements.playLabel.textContent = playing ? "Pause" : "Play";
+  elements.playLabel.textContent = requested ? "Pause" : "Play";
+  elements.play.title = buffering ? "Buffering… Click to pause" : requested ? "Pause" : "Play";
+  elements.duration.textContent = buffering ? "Buffering…" : formatTime(receivedSamples);
   elements.player.classList.toggle("is-playing", playing);
 }
 
@@ -654,7 +660,8 @@ function getWorker() {
       receivedSamples += data.length;
       audioChunks.push({ start, end: receivedSamples, data });
       sessionAvailable = true;
-      if (wantsPlayback) streamPlayer?.playAudio(data);
+      if (wantsPlayback && playbackQueued) streamPlayer?.playAudio(data);
+      else maybeStartPlayback();
 
       if (!firstChunkSeen) {
         firstChunkSeen = true;
@@ -662,6 +669,7 @@ function getWorker() {
       }
 
       updateTimeline();
+      updatePlayState();
       if (receivedSamples >= MAX_SESSION_SAMPLES) stopAtSessionLimit();
       return;
     }
@@ -671,9 +679,8 @@ function getWorker() {
         ignoreNextStreamEnd = false;
         return;
       }
-      streamEnded = true;
+      finishStream();
       downloadReady = receivedSamples > 0;
-      if (wantsPlayback) streamPlayer?.notifyStreamEnded();
       updateTimeline();
       generationRequest?.resolve({ cancelled: false });
       generationRequest = null;
@@ -690,9 +697,8 @@ function getWorker() {
 
     if (message.type === "generation_cancelled") {
       ignoreNextStreamEnd = true;
-      streamEnded = true;
+      finishStream();
       downloadReady = false;
-      if (wantsPlayback) streamPlayer?.notifyStreamEnded();
       updateTimeline();
       updatePlayerControls();
       generationRequest?.resolve({ cancelled: true });
@@ -735,7 +741,7 @@ async function ensurePlayer() {
     });
 
     streamPlayer.addEventListener("position", (event) => {
-      if (isSeeking) return;
+      if (isSeeking || !playbackQueued) return;
       playbackPositionSamples = Math.min(
         receivedSamples,
         playbackBaseSamples + Number(event.detail?.samplesPlayed || 0),
@@ -746,6 +752,7 @@ async function ensurePlayer() {
     streamPlayer.addEventListener("audioEnded", () => {
       isPlaying = false;
       wantsPlayback = false;
+      playbackQueued = false;
       playbackPositionSamples = receivedSamples;
       updateTimeline();
       updatePlayState();
@@ -1010,9 +1017,8 @@ async function removeStoredModel(language) {
       voiceRequest = null;
       activeWorkerCustomVoices.clear();
       acceptGenerationAudio = false;
-      streamEnded = true;
+      finishStream();
       elements.status.hidden = true;
-      if (wantsPlayback) streamPlayer?.notifyStreamEnded();
 
       pendingLoad?.reject(cancellation);
       pendingGeneration?.resolve({ cancelled: true });
@@ -1092,6 +1098,8 @@ function resetSession(text) {
   downloadReady = false;
   isPlaying = false;
   wantsPlayback = continuePlayback;
+  playbackQueued = false;
+  generationStartedAt = 0;
   firstChunkSeen = false;
   memoryLimitReached = false;
   elements.seek.value = "0";
@@ -1116,6 +1124,8 @@ function clearSession() {
   downloadReady = false;
   isPlaying = false;
   wantsPlayback = false;
+  playbackQueued = false;
+  generationStartedAt = 0;
   firstChunkSeen = false;
   memoryLimitReached = false;
   elements.seek.value = "0";
@@ -1154,6 +1164,7 @@ function generateWithPocket(text, language, voice) {
     generationRequest = { promise: null, resolve, reject };
   });
   generationRequest.promise = promise;
+  generationStartedAt = performance.now();
   getWorker().postMessage({ type: "generate", data: { text, language, voice } });
   return promise;
 }
@@ -1215,8 +1226,7 @@ async function generateSpeech(job) {
     console.error(error);
     hideGenerationNote();
     acceptGenerationAudio = false;
-    streamEnded = true;
-    if (wantsPlayback) streamPlayer?.notifyStreamEnded();
+    finishStream();
     if (job.revision === generationRevision) {
       const message = friendlyError(error);
       showStatus(sessionAvailable ? "Could not finish" : "Could not start", message, false);
@@ -1272,7 +1282,7 @@ function scheduleGeneration(delay = AUTO_GENERATE_DELAY) {
 
   if (elements.language.value === "french_24l") {
     showGenerationNote(
-      "French generates more slowly. For uninterrupted playback, wait until the full reading is ready.",
+      "French takes longer to generate. Press Play; playback will begin when enough audio is ready.",
     );
   }
 
@@ -1295,12 +1305,37 @@ function scheduleGeneration(delay = AUTO_GENERATE_DELAY) {
 
 function queueFromPosition(targetSamples) {
   streamPlayer.reset();
+  playbackQueued = false;
+  isPlaying = false;
   playbackBaseSamples = targetSamples;
   playbackPositionSamples = targetSamples;
+  maybeStartPlayback();
+}
+
+function hasPlaybackHeadStart() {
+  if (streamEnded) return true;
+  const generatedSeconds = receivedSamples / SAMPLE_RATE;
+  const bufferedSeconds = (receivedSamples - playbackPositionSamples) / SAMPLE_RATE;
+  const elapsedSeconds = (performance.now() - generationStartedAt) / 1000;
+  if (bufferedSeconds < 3 || elapsedSeconds <= 0) return false;
+
+  // Use full wall time, including text preparation and gaps between PCM batches.
+  // Allow 10% slower production and a text estimate up to 20% too short.
+  const safeRate = 0.9 * generatedSeconds / elapsedSeconds;
+  const remainingSeconds = Math.max(0, estimatedDurationSamples * 1.25 / SAMPLE_RATE - generatedSeconds);
+  const deficitSeconds = remainingSeconds * Math.max(0, 1 / safeRate - 1);
+  // Two seconds cover ordinary batch jitter; the three-second floor also avoids
+  // making a throughput decision from the first tiny (240 ms) batch.
+  return bufferedSeconds >= Math.max(3, deficitSeconds + 2);
+}
+
+function maybeStartPlayback() {
+  if (!wantsPlayback || playbackQueued || !streamPlayer || !hasPlaybackHeadStart()) return;
+  playbackQueued = true;
 
   for (const chunk of audioChunks) {
-    if (chunk.end <= targetSamples) continue;
-    const offset = Math.max(0, targetSamples - chunk.start);
+    if (chunk.end <= playbackBaseSamples) continue;
+    const offset = Math.max(0, playbackBaseSamples - chunk.start);
     const segment = offset > 0 ? chunk.data.subarray(offset) : chunk.data;
     if (segment.length) streamPlayer.playAudio(segment);
   }
@@ -1308,10 +1343,17 @@ function queueFromPosition(targetSamples) {
   if (streamEnded) streamPlayer.notifyStreamEnded();
 }
 
+function finishStream() {
+  streamEnded = true;
+  if (wantsPlayback && playbackQueued) streamPlayer?.notifyStreamEnded();
+  else maybeStartPlayback();
+  updatePlayState();
+}
+
 async function seekToSamples(samples, announce = true) {
   if (!sessionAvailable || !streamPlayer) return;
   const target = Math.round(Math.min(receivedSamples, Math.max(0, samples)));
-  const shouldContinue = wantsPlayback && isPlaying && audioContext?.state === "running";
+  const shouldContinue = wantsPlayback && audioContext?.state === "running";
 
   if (!shouldContinue && audioContext?.state === "running") {
     try {
@@ -1323,7 +1365,6 @@ async function seekToSamples(samples, announce = true) {
 
   wantsPlayback = shouldContinue;
   queueFromPosition(target);
-  isPlaying = shouldContinue && (!streamEnded || target < receivedSamples);
   displayedPlaybackRatio = target / timelineScaleSamples();
   lastTimelinePositionSamples = target;
   updateTimeline();
@@ -1599,10 +1640,10 @@ async function togglePlayback() {
       await audioContext.suspend();
       isPlaying = false;
     } else {
-      queueFromPosition(atEnd ? 0 : playbackPositionSamples);
       wantsPlayback = true;
+      queueFromPosition(atEnd ? 0 : playbackPositionSamples);
       await audioContext.resume();
-      isPlaying = true;
+      isPlaying = wantsPlayback && playbackQueued;
     }
     updateTimeline();
     updatePlayState();
