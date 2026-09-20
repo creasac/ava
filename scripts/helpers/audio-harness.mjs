@@ -5,9 +5,7 @@ import vm from 'node:vm';
 const playerSource = await readFile(new URL('../../pocket/PCMPlayerWorklet.js', import.meta.url), 'utf8');
 const emitterSource = await readFile(new URL('../../pocket/EventEmitter.js', import.meta.url), 'utf8');
 const appSource = await readFile(new URL('../../app.js', import.meta.url), 'utf8');
-const playerConstruction = appSource.match(/new PCMPlayerWorklet\(audioContext,\s*(\{[^}]+\})\)/);
-assert.ok(playerConstruction, 'test the player options actually used by the app');
-const playerOptions = vm.runInNewContext(`(${playerConstruction[1]})`);
+assert.ok(appSource.includes('new PCMPlayerWorklet(audioContext)'), 'test the same player construction as the app');
 export const sampleRate = 24000;
 export const quantum = 128;
 
@@ -65,7 +63,7 @@ export async function createPlayer({ instantiate = true } = {}) {
     playerSource.replace(/^import .*\n/, '').replace('export class PCMPlayerWorklet', 'class PCMPlayerWorklet')
       + '\nglobalThis.PCMPlayerWorklet = PCMPlayerWorklet;', context,
   );
-  const player = instantiate ? new context.PCMPlayerWorklet(audioContext, playerOptions) : null;
+  const player = instantiate ? new context.PCMPlayerWorklet(audioContext) : null;
   if (player) await player.initPromise;
 
   function flushMessages() {

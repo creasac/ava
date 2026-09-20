@@ -8,9 +8,10 @@ const workerSource = await readFile(new URL('../pocket/inference-worker.js', imp
 // Run the real worker pipeline with explicit deterministic model doubles. This
 // checks chunk-object consumption and emitted PCM, not model quality or the
 // tokenizer/chunking algorithm (covered separately with the real tokenizer).
-async function generate(chunks) {
+async function generate(chunks, language = 'english_2026-04') {
   const messages = [];
   const encodedTexts = [];
+  const flowNoise = [];
   let chunkIndex = -1;
   let clock = 0;
   const frameSamples = 1920;
@@ -37,6 +38,7 @@ async function generate(chunks) {
     },
     flow: {
       async run({ x }) {
+        flowNoise.push(x.data[0]);
         return { flow_dir: new Tensor('float32', new Float32Array(x.data.length), x.dims) };
       }
     },
@@ -47,6 +49,8 @@ async function generate(chunks) {
         // Each request has its own nonzero PCM marker, making both ordering and
         // inserted silence directly observable in the worker's output.
         const data = new Float32Array(latent.dims[1] * frameSamples).fill((chunkIndex + 1) / 8);
+        data.fill(0, 0, 17); // Model-produced silence must remain untouched.
+        data.fill(0, data.length - 23);
         return { audio: new Tensor('float32', data, [1, 1, data.length]) };
       }
     }
@@ -64,6 +68,7 @@ async function generate(chunks) {
     Tensor,
     sessions,
     chunks,
+    language,
     tokenizer: {
       encodeIds(text) {
         assert.equal(typeof text, 'string', 'the worker must pass chunk.text to the tokenizer');
@@ -76,6 +81,7 @@ async function generate(chunks) {
   vm.runInContext(workerSource.replace(/^import .*\n/m, ''), context);
   await vm.runInContext(`
     Math.random = () => 0.5;
+    currentLanguage = language;
     ort = { Tensor };
     bundleMetadata = { mimi_state_manifest: [], flow_lm_state_manifest: [] };
     tokenizerProcessor = tokenizer;
@@ -94,7 +100,7 @@ async function generate(chunks) {
     runGenerationPipeline('test-voice', chunks, 1);
   `, context);
   assert.deepEqual(encodedTexts, chunks.map(chunk => chunk.text));
-  return messages.filter(message => message.type === 'audio_chunk');
+  return { audio: messages.filter(message => message.type === 'audio_chunk'), flowNoise };
 }
 
 for (const boundaries of [
@@ -102,31 +108,33 @@ for (const boundaries of [
   ['continuation', 'continuation', 'continuation'],
   ['sentence']
 ]) {
-  test(`generation emits gaps only after non-final sentence boundaries: ${boundaries.join(', ')}`, async () => {
+  test(`generation preserves natural PCM without inserted gaps: ${boundaries.join(', ')}`, async () => {
     const chunks = boundaries.map((boundary, index) => ({ text: `Request ${index + 1}`, boundary }));
-    const audio = await generate(chunks);
+    const { audio } = await generate(chunks);
     let outputIndex = 0;
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const emitted = audio[outputIndex++];
       assert.ok(emitted, `missing audio for request ${chunkIndex + 1}`);
       assert.equal(emitted.data.length, 3840);
-      assert.ok(emitted.data.every(value => value === (chunkIndex + 1) / 8));
+      assert.ok(emitted.data.subarray(0, 17).every(value => value === 0));
+      assert.ok(emitted.data.subarray(17, -23).every(value => value === (chunkIndex + 1) / 8));
+      assert.ok(emitted.data.subarray(-23).every(value => value === 0));
       assert.equal(emitted.metrics.isFirst, chunkIndex === 0);
       assert.equal(emitted.metrics.isLast, chunkIndex === chunks.length - 1);
       assert.equal(emitted.metrics.chunkStart, true);
       assert.ok(!emitted.metrics.isSilence);
 
-      if (chunks[chunkIndex].boundary === 'sentence' && chunkIndex < chunks.length - 1) {
-        const gap = audio[outputIndex++];
-        assert.ok(gap, 'missing sentence gap');
-        assert.equal(gap.data.length, 6000, '250 ms at 24 kHz');
-        assert.ok(gap.data.every(value => value === 0));
-        assert.equal(gap.metrics.chunkDuration, 0.25);
-        assert.equal(gap.metrics.isSilence, true);
-        assert.equal(gap.metrics.isFirst, false);
-        assert.equal(gap.metrics.isLast, false);
-      }
     }
-    assert.equal(audio.length, outputIndex, 'no continuation gap or trailing gap');
+    assert.equal(audio.length, outputIndex, 'no sentence, continuation, or trailing padding');
+  });
+}
+
+for (const language of ['english_2026-04', 'french_24l', 'german', 'italian', 'portuguese', 'spanish']) {
+  test(`${language} uses its intended sampling temperature`, async () => {
+    const { flowNoise } = await generate([{ text: 'Request 1', boundary: 'sentence' }], language);
+    const temperature = language === 'english_2026-04' ? 0.3 : 0.7;
+    const expected = Math.fround(-Math.sqrt(-2 * Math.log(0.5)) * Math.sqrt(temperature));
+    assert.ok(flowNoise.length > 0);
+    assert.ok(flowNoise.every(value => value === expected));
   });
 }

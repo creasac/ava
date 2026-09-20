@@ -5,10 +5,9 @@ import { EventEmitter, CustomEvent } from './EventEmitter.js?v=1';
  * Uses dynamic buffer management with backpressure for smooth playback
  */
 export class PCMPlayerWorklet extends EventEmitter {
-  constructor(audioContext, options = {}) {
+  constructor(audioContext) {
     super();
     this.audioContext = audioContext;
-    this.options = options;
     this.workletNode = null;
     this.isInitialized = false;
     this.playbackTime = 0; // For API compatibility
@@ -46,8 +45,6 @@ export class PCMPlayerWorklet extends EventEmitter {
     try {
       // Calculate buffer parameters
       const sampleRate = this.audioContext.sampleRate;
-      const minBufferMs = this.options.minBufferBeforePlaybackMs || 300;
-      const minBufferSamples = Math.floor(minBufferMs * sampleRate / 1000);
 
       // Buffer size: enough for smooth playback but not excessive
       // Target 60 seconds of buffer to prevent any overflow issues
@@ -65,10 +62,6 @@ export class PCMPlayerWorklet extends EventEmitter {
             this.readPos = 0;
             this.writePos = 0;
             this.isPlaying = false;
-
-            // Configuration
-            this.minBufferSamples = ${minBufferSamples};
-            this.targetBufferSamples = ${minBufferSamples * 2}; // Target 2x min for stability
 
             // State
             this.streamEnded = false;
@@ -115,9 +108,6 @@ export class PCMPlayerWorklet extends EventEmitter {
           addAudio(float32Data) {
             const samples = float32Data.length;
             const available = this.getAvailableSpace();
-            const bufferedBefore = this.getBufferedSamples();
-
-
             if (samples > available) {
               // This shouldn't happen with proper backpressure
               console.error('Buffer overflow - bug in backpressure. Samples:', samples, 'Available:', available, 'Buffered:', this.getBufferedSamples());
@@ -141,10 +131,10 @@ export class PCMPlayerWorklet extends EventEmitter {
               this.writePos = secondPart;
             }
 
-            // Auto-start when we have enough buffered
+            // Consume the first available samples without a duration threshold.
             const buffered = this.getBufferedSamples();
 
-            if (!this.isPlaying && buffered >= this.minBufferSamples) {
+            if (!this.isPlaying && buffered > 0) {
               const now = currentTime;
               this.isPlaying = true;
               // Notify that playback has started
@@ -189,19 +179,11 @@ export class PCMPlayerWorklet extends EventEmitter {
             const buffered = this.getBufferedSamples();
             const capacity = this.getAvailableSpace();
 
-            // Calculate how much we want to receive
-            // If buffer is low, request more; if it's full, request nothing
-            let requestSamples = 0;
-            if (buffered < this.targetBufferSamples) {
-              requestSamples = Math.min(capacity, this.targetBufferSamples - buffered);
-            }
-
             this.port.postMessage({
               type: 'capacity',
               sessionId: this.sessionId,
               buffered: buffered,
               capacity: capacity,
-              requestSamples: requestSamples,
               isPlaying: this.isPlaying
             });
           }
@@ -398,8 +380,8 @@ export class PCMPlayerWorklet extends EventEmitter {
       }
     }
 
-    // If worklet is requesting data, try to send it
-    if (data.requestSamples > 0 && this.pendingChunks.length > 0) {
+    // Refill available space; capacity limits delivery, never playback startup.
+    if (data.capacity > 0 && this.pendingChunks.length > 0) {
       this.processPendingChunks();
     }
   }
@@ -431,7 +413,6 @@ export class PCMPlayerWorklet extends EventEmitter {
     } else if (this.availableCapacity > 4096) {
       // Send partial chunk only if we have significant space
       const partial = chunk.slice(0, this.availableCapacity);
-      console.log(`Sending partial: ${partial.length} samples from ${chunk.length} (capacity: ${this.availableCapacity})`);
       this.pendingChunks[0] = chunk.slice(this.availableCapacity);
       this.workletNode.port.postMessage({
         type: 'audio',
@@ -440,8 +421,6 @@ export class PCMPlayerWorklet extends EventEmitter {
       });
       // Set capacity to 0 to prevent sending more until we get an update
       this.availableCapacity = 0;
-    } else {
-      console.log(`Not sending - chunk ${chunk.length} samples, capacity ${this.availableCapacity}`);
     }
     // else: Not enough space, wait for next capacity update
 

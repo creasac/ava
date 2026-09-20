@@ -54,14 +54,16 @@ async function simulateBatches(generationSpeed, arrivalJitter = [0, 0, 0, 0]) {
   assertAudio(output, expected);
 }
 
-test('low-level worklet starts with the first 240 ms audio batch', async () => {
+for (const length of [1, 37, 128, 5760]) {
+test(`low-level worklet starts with the first ${length} samples before stream end`, async () => {
   const harness = await createPlayer();
-  const expected = samples(5760);
+  const expected = samples(length);
   harness.player.playAudio(expected);
   assertAudio(harness.render(), expected.slice(0, quantum));
   harness.player.notifyStreamEnded();
   assertAudio(drain(harness), expected.slice(quantum));
 });
+}
 
 for (const speed of [0.5, 0.8, 1, 2]) {
   test(`generation at ${speed}x plays available PCM without added waits and preserves every sample`, async () => {
@@ -106,12 +108,8 @@ for (const initiallyPlaying of [false, true]) {
     }
     harness.player.playAudio(expected.slice(initialLength));
     const firstTailFrame = harness.render();
-    if (initiallyPlaying) {
-      assertAudio(firstTailFrame, expected.slice(initialLength, initialLength + quantum));
-      output.push(...firstTailFrame);
-    } else {
-      assertSilence(firstTailFrame);
-    }
+    assertAudio(firstTailFrame, expected.slice(initialLength, initialLength + quantum));
+    output.push(...firstTailFrame);
     harness.player.notifyStreamEnded();
     output.push(...drain(harness));
     assertAudio(output, expected);
@@ -140,7 +138,7 @@ for (const initiallyPlaying of [false, true]) {
 test('queued chunks respect capacity and deliver stream end after the last audio', async () => {
   const harness = await createPlayer();
   const batchSize = 23040;
-  const expected = samples(batchSize * 8);
+  const expected = samples(batchSize * 70);
   for (let offset = 0; offset < expected.length; offset += batchSize) {
     harness.player.playAudio(expected.slice(offset, offset + batchSize));
   }
@@ -158,7 +156,7 @@ test('queued chunks respect capacity and deliver stream end after the last audio
 test('reset for seeking discards old queued audio and ignores stale session messages', async () => {
   const harness = await createPlayer();
   const oldSession = harness.player.playbackSession;
-  for (let i = 0; i < 8; i++) harness.player.playAudio(samples(23040));
+  for (let i = 0; i < 70; i++) harness.player.playAudio(samples(23040));
   harness.player.notifyStreamEnded();
   harness.flushMessages();
   assert.ok(harness.player.pendingChunks.length > 0);

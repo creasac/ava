@@ -19,13 +19,15 @@ The theme follows the operating system until the header toggle is used, then the
 chosen theme is remembered locally.
 When generation finishes, the player can download the completed reading as a
 16-bit mono WAV without regenerating it.
-Press Play once. While the reading is still generating, the player shows
-“Buffering…” and automatically starts when enough audio is ready. It estimates
-the head start from the text length and the actual generation speed on this
-device, with a safety margin. Slower generation and longer readings need a longer
-initial wait. Press Pause to cancel waiting. Completed readings play immediately.
-This does not speed up synthesis or guarantee uninterrupted playback if the
-device slows down substantially after playback starts.
+Press Play to hear available audio immediately. You can also press Play during
+loading or generation; the first samples play as soon as they arrive. Pause
+cancels that request. There is no minimum accumulated duration or whole-reading
+startup wait. Slow generation can leave audible gaps; arriving samples resume
+immediately. Sentence transitions preserve the model's natural pauses without
+adding fixed silence, trimming, or crossfading.
+A hint beside the timer appears once audio is available and stays visible while
+generation continues, including when paused. It hides when generation finishes
+or the text is cleared, without shifting the controls.
 
 | Key | Action |
 | --- | --- |
@@ -36,7 +38,7 @@ device slows down substantially after playback starts.
 
 | Language | Default voice |
 | --- | --- |
-| English | Alba |
+| English | Jane |
 | French | Estelle |
 | German | Juergen |
 | Italian | Giovanni |
@@ -44,17 +46,25 @@ device slows down substantially after playback starts.
 | Spanish | Lola |
 
 French uses the substantially larger 24-layer bundle. It works locally like the
-other languages, but generation is much slower on typical CPUs, so the initial
-buffering wait can be longer.
+other languages, but generation is much slower on typical CPUs and can produce
+more gaps during immediate playback.
 
-Each language has one built-in voice. Cloned voices are language-specific.
+English offers Jane and Alba; the other languages each have one built-in voice.
+Older remembered English Alba defaults migrate once to Jane. Cloned voice choices
+and later explicit Alba selections are preserved. Cloned voices are language-specific.
+
+English uses sampling temperature 0.3, following [Kyutai's English configuration](https://github.com/kyutai-labs/pocket-tts/blob/main/pocket_tts/config/english_2026-04.yaml).
+Its human evaluations preferred 0.3 with equal word error rate; this is not a
+verified pronunciation fix. Other languages retain temperature 0.7.
 
 ## Downloads and storage
 
-Each 6-layer language requires an approximately 130–132 MB first-use model
+Each 6-layer language requires an approximately 130–133 MB first-use model
 download. French requires about 387 MB on first use, including its Estelle voice.
 The model assets across all six languages total about 1.01 GB; voice files add to
-that. ava stores completed bundles in the browser Cache API, requests persistent
+that. Jane's pinned voice state is 7,374,072 bytes (about 7.4 MB), included in the
+English first-use total of about 132.8 MB. Alba is downloaded on selection, and
+existing cached model weights are reused. ava stores completed bundles in the browser Cache API, requests persistent
 storage, and reuses them without another model download. Open the language status
 in the header to inspect or remove stored languages at any time. Removing the
 active language stops its current load or generation; retained audio remains
@@ -147,12 +157,19 @@ node --test scripts/*.test.mjs
 The chunking tests use Ava's actual pinned English tokenizer. The first run
 downloads its approximately 59 KB model to the system temporary directory and
 verifies its SHA-256. For an offline run, set `AVA_TOKENIZER_MODEL` to a local copy
-of that tokenizer model. Playback tests run the app's Play/Pause, seek, and startup
-buffering logic with the actual AudioWorklet processor and queue. Timed PCM
+of that tokenizer model. Playback tests run the app's Play/Pause, seek, and immediate
+startup logic with the actual AudioWorklet processor and queue. Timed PCM
 arrivals cover slow generation, uneven arrivals, underestimated reading length,
 long queues, short endings, and cancellation. These simulations do not replace
-listening in a browser. Worker tests verify which text boundaries receive an
-added pause using stub model sessions; they do not measure speech quality.
+listening in a browser. Worker tests verify unchanged natural PCM, no inserted
+silence at any text boundary, and language-specific temperatures using stub model
+sessions; they do not measure speech quality.
+
+The voice loader test checks Jane's real 7.4 MB safetensors state and the pinned
+English bundle manifest, verifies their SHA-256 hashes, and confirms all six voice
+caches and offsets survive conversion. These files are cached in the temporary
+directory. Set `AVA_JANE_STATE` and `AVA_ENGLISH_BUNDLE` to local copies for an
+offline run.
 
 ## Project structure
 

@@ -9,14 +9,14 @@ const MODEL_REVISION = "58a6d00cf13d239b6748cb0769f35c580a8f606c";
 const VOICE_REVISION = "e041936c75475d350b405bc870bcf7c22da4e9e6";
 // Keep the original cache name so existing English model downloads are reused.
 const MODEL_CACHE_NAME = "ava-pocket-tts-en-58a6d00-d0c0c79-v1";
-const MODEL_CACHE_MARKER_PREFIX = "ava-pocket-ready-58a6d00-e041936-v2";
+const MODEL_CACHE_MARKER_PREFIX = "ava-pocket-ready-58a6d00-e041936-v3";
 const PREFERENCES_KEY = "ava-preferences-v1";
 const THEME_KEY = "ava-theme-v1";
 const VOICE_DATABASE_NAME = "ava-voices-v1";
 const VOICE_STORE_NAME = "voices";
 const DEFAULT_LANGUAGE = "english_2026-04";
 const LANGUAGE_DETAILS = {
-  [DEFAULT_LANGUAGE]: { label: "English", voice: "alba", bytes: 131658438 },
+  [DEFAULT_LANGUAGE]: { label: "English", voice: "jane", bytes: 132838086 },
   french_24l: { label: "French", voice: "estelle", bytes: 354285748 },
   german: { label: "German", voice: "juergen", bytes: 131708069 },
   italian: { label: "Italian", voice: "giovanni", bytes: 130086289 },
@@ -32,7 +32,7 @@ const LANGUAGE_VOICES = {
   spanish: LANGUAGE_DETAILS.spanish.voice,
 };
 const LANGUAGE_BUILTIN_VOICES = {
-  [DEFAULT_LANGUAGE]: ["alba"],
+  [DEFAULT_LANGUAGE]: ["jane", "alba"],
   french_24l: ["estelle"],
   german: ["juergen"],
   italian: ["giovanni"],
@@ -72,6 +72,7 @@ const elements = {
   seek: document.querySelector("#seek-slider"),
   currentTime: document.querySelector("#current-time"),
   duration: document.querySelector("#duration"),
+  playbackHint: document.querySelector("#playback-hint"),
   play: document.querySelector("#play-button"),
   playLabel: document.querySelector("#play-label"),
   playbackIconPath: document.querySelector("#playback-icon-path"),
@@ -111,6 +112,7 @@ let queuedGeneration = null;
 
 let audioContext = null;
 let streamPlayer = null;
+let playerInitPromise = null;
 let audioChunks = [];
 let receivedSamples = 0;
 let playbackBaseSamples = 0;
@@ -126,7 +128,6 @@ let ignoreNextStreamEnd = false;
 let isPlaying = false;
 let wantsPlayback = false;
 let playbackQueued = false;
-let generationStartedAt = 0;
 let isSeeking = false;
 let firstChunkSeen = false;
 let memoryLimitReached = false;
@@ -308,6 +309,11 @@ function loadPreferences() {
 
     if (saved.voices && typeof saved.voices === "object") {
       voiceSelections = { ...saved.voices };
+      // Older versions remembered Alba even when the user never chose a voice.
+      // Migrate that former default once, keeping cloned voices and later choices.
+      if (saved.englishDefaultVoice !== "jane" && voiceSelections[DEFAULT_LANGUAGE] === "alba") {
+        voiceSelections[DEFAULT_LANGUAGE] = "jane";
+      }
     }
 
   } catch {
@@ -320,6 +326,7 @@ function savePreferences() {
   storageSet(PREFERENCES_KEY, JSON.stringify({
     language: elements.language.value,
     voices: voiceSelections,
+    englishDefaultVoice: "jane",
   }));
 }
 
@@ -483,12 +490,17 @@ function updateActivityState() {
     generationTimer || queuedGeneration || isLoading || isGenerating || isStopping || isVoiceTask
   );
   elements.player.setAttribute("aria-busy", String(busy));
+  updatePlayerControls();
+}
+
+function hasPendingGeneration() {
+  return Boolean(generationTimer || queuedGeneration || isLoading || isGenerating);
 }
 
 function updatePlayerControls() {
   const enabled = sessionAvailable;
   elements.seek.disabled = !enabled;
-  elements.play.disabled = !enabled;
+  elements.play.disabled = !enabled && !hasPendingGeneration();
   elements.download.disabled = !downloadReady || isExporting;
   elements.download.title = isExporting
     ? "Preparing WAV…"
@@ -496,6 +508,9 @@ function updatePlayerControls() {
       ? "Download WAV"
       : "Available when generation finishes";
   elements.player.classList.toggle("is-empty", !enabled);
+  elements.playbackHint.style.visibility = isGenerating && !streamEnded && receivedSamples > 0
+    ? "visible"
+    : "hidden";
 }
 
 function updateTimeline() {
@@ -527,16 +542,16 @@ function updateTimeline() {
 }
 
 function updatePlayState() {
-  const requested = wantsPlayback && audioContext?.state === "running";
+  const requested = wantsPlayback;
   const playing = wantsPlayback && isPlaying && audioContext?.state === "running";
-  const buffering = requested && !playbackQueued;
+  const waiting = requested && !playbackQueued;
   elements.playbackIconPath.setAttribute(
     "d",
     requested ? "M8 7h3v10H8zM13 7h3v10h-3z" : "m9 7 8 5-8 5z",
   );
   elements.playLabel.textContent = requested ? "Pause" : "Play";
-  elements.play.title = buffering ? "Buffering… Click to pause" : requested ? "Pause" : "Play";
-  elements.duration.textContent = buffering ? "Buffering…" : formatTime(receivedSamples);
+  elements.play.title = waiting ? "Waiting for audio… Click to pause" : requested ? "Pause" : "Play";
+  elements.duration.textContent = formatTime(receivedSamples);
   elements.player.classList.toggle("is-playing", playing);
 }
 
@@ -575,7 +590,7 @@ function stopAtSessionLimit() {
 function getWorker() {
   if (worker) return worker;
 
-  worker = new Worker(new URL("./pocket/inference-worker.js?v=18", import.meta.url), {
+  worker = new Worker(new URL("./pocket/inference-worker.js?v=19", import.meta.url), {
     type: "module",
     name: "ava-pocket-tts",
   });
@@ -726,13 +741,26 @@ function getWorker() {
 }
 
 async function ensurePlayer() {
+  if (!playerInitPromise) {
+    playerInitPromise = initializePlayer().catch(async (error) => {
+      streamPlayer = null;
+      await audioContext?.close?.().catch(() => {});
+      audioContext = null;
+      playerInitPromise = null;
+      throw error;
+    });
+  }
+  return playerInitPromise;
+}
+
+async function initializePlayer() {
   if (!streamPlayer) {
     const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextConstructor) throw new Error("AudioWorklet is unavailable in this browser");
 
     audioContext = new AudioContextConstructor({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" });
-    const { PCMPlayerWorklet } = await import("./pocket/PCMPlayerWorklet.js?v=9");
-    streamPlayer = new PCMPlayerWorklet(audioContext, { minBufferBeforePlaybackMs: 220 });
+    const { PCMPlayerWorklet } = await import("./pocket/PCMPlayerWorklet.js?v=10");
+    streamPlayer = new PCMPlayerWorklet(audioContext);
     await streamPlayer.initPromise;
 
     streamPlayer.addEventListener("firstPlayback", () => {
@@ -1084,7 +1112,6 @@ function ensureModel(language) {
 }
 
 function resetSession(text) {
-  const continuePlayback = wantsPlayback && audioContext?.state === "running";
   streamPlayer?.reset();
   audioChunks = [];
   receivedSamples = 0;
@@ -1097,9 +1124,7 @@ function resetSession(text) {
   sessionAvailable = false;
   downloadReady = false;
   isPlaying = false;
-  wantsPlayback = continuePlayback;
   playbackQueued = false;
-  generationStartedAt = 0;
   firstChunkSeen = false;
   memoryLimitReached = false;
   elements.seek.value = "0";
@@ -1125,7 +1150,6 @@ function clearSession() {
   isPlaying = false;
   wantsPlayback = false;
   playbackQueued = false;
-  generationStartedAt = 0;
   firstChunkSeen = false;
   memoryLimitReached = false;
   elements.seek.value = "0";
@@ -1164,7 +1188,6 @@ function generateWithPocket(text, language, voice) {
     generationRequest = { promise: null, resolve, reject };
   });
   generationRequest.promise = promise;
-  generationStartedAt = performance.now();
   getWorker().postMessage({ type: "generate", data: { text, language, voice } });
   return promise;
 }
@@ -1282,7 +1305,7 @@ function scheduleGeneration(delay = AUTO_GENERATE_DELAY) {
 
   if (elements.language.value === "french_24l") {
     showGenerationNote(
-      "French takes longer to generate. Press Play; playback will begin when enough audio is ready.",
+      "French takes longer to generate. Press Play; playback will begin with the first audio.",
     );
   }
 
@@ -1312,25 +1335,10 @@ function queueFromPosition(targetSamples) {
   maybeStartPlayback();
 }
 
-function hasPlaybackHeadStart() {
-  if (streamEnded) return true;
-  const generatedSeconds = receivedSamples / SAMPLE_RATE;
-  const bufferedSeconds = (receivedSamples - playbackPositionSamples) / SAMPLE_RATE;
-  const elapsedSeconds = (performance.now() - generationStartedAt) / 1000;
-  if (bufferedSeconds < 3 || elapsedSeconds <= 0) return false;
-
-  // Use full wall time, including text preparation and gaps between PCM batches.
-  // Allow 10% slower production and a text estimate up to 20% too short.
-  const safeRate = 0.9 * generatedSeconds / elapsedSeconds;
-  const remainingSeconds = Math.max(0, estimatedDurationSamples * 1.25 / SAMPLE_RATE - generatedSeconds);
-  const deficitSeconds = remainingSeconds * Math.max(0, 1 / safeRate - 1);
-  // Two seconds cover ordinary batch jitter; the three-second floor also avoids
-  // making a throughput decision from the first tiny (240 ms) batch.
-  return bufferedSeconds >= Math.max(3, deficitSeconds + 2);
-}
-
 function maybeStartPlayback() {
-  if (!wantsPlayback || playbackQueued || !streamPlayer || !hasPlaybackHeadStart()) return;
+  if (!wantsPlayback || playbackQueued || !streamPlayer) return;
+  // Keep Play intent at an empty live edge; start with even a single sample.
+  if (receivedSamples <= playbackBaseSamples && (!streamEnded || !sessionAvailable)) return;
   playbackQueued = true;
 
   for (const chunk of audioChunks) {
@@ -1345,6 +1353,7 @@ function maybeStartPlayback() {
 
 function finishStream() {
   streamEnded = true;
+  if (!sessionAvailable) wantsPlayback = false;
   if (wantsPlayback && playbackQueued) streamPlayer?.notifyStreamEnded();
   else maybeStartPlayback();
   updatePlayState();
@@ -1631,16 +1640,21 @@ async function startRecording() {
 }
 
 async function togglePlayback() {
-  if (!sessionAvailable || !audioContext) return;
-  const atEnd = streamEnded && playbackPositionSamples >= receivedSamples - SAMPLE_RATE / 10;
+  if (!sessionAvailable && !hasPendingGeneration()) return;
 
   try {
-    if (wantsPlayback && audioContext.state === "running") {
+    if (wantsPlayback) {
       wantsPlayback = false;
-      await audioContext.suspend();
+      updatePlayState();
+      await audioContext?.suspend();
       isPlaying = false;
     } else {
       wantsPlayback = true;
+      updatePlayState();
+      await ensurePlayer();
+      if (!wantsPlayback) return;
+      const atEnd = streamEnded && sessionAvailable
+        && playbackPositionSamples >= receivedSamples - SAMPLE_RATE / 10;
       queueFromPosition(atEnd ? 0 : playbackPositionSamples);
       await audioContext.resume();
       isPlaying = wantsPlayback && playbackQueued;
@@ -1649,6 +1663,8 @@ async function togglePlayback() {
     updatePlayState();
     activatePendingServiceWorkerIfIdle();
   } catch {
+    wantsPlayback = false;
+    updatePlayState();
     showToast("Playback could not start");
   }
 }

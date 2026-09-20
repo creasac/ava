@@ -14,7 +14,7 @@
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
       } catch {}
     </script>
-    <link rel="stylesheet" href="./style.css?v=29" />
+    <link rel="stylesheet" href="./style.css?v=32" />
   </head>
   <body>
     <header class="header">
@@ -108,7 +108,8 @@
                 </div>
 
                 <div class="time-line">
-                  <span><span id="current-time">0:00</span> / <span id="duration">0:00</span></span>
+                  <span class="time-values"><span id="current-time">0:00</span> / <span id="duration">0:00</span></span>
+                  <span class="playback-hint" id="playback-hint">If playback pauses, wait for generation to finish.</span>
                 </div>
               </div>
               <button class="download-button" id="download-button" type="button" aria-label="Download WAV" title="Available when generation finishes" disabled>
@@ -165,6 +166,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="./app.js?v=45"></script>
+    <script type="module" src="./app.js?v=47"></script>
   </body>
 </html>

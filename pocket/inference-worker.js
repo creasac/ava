@@ -19,7 +19,7 @@ const LANGUAGE_BUNDLES = [
     "spanish",
 ];
 const LANGUAGE_DEFAULT_VOICES = {
-    "english_2026-04": "alba",
+    "english_2026-04": "jane",
     french_24l: "estelle",
     german: "juergen",
     italian: "giovanni",
@@ -27,7 +27,7 @@ const LANGUAGE_DEFAULT_VOICES = {
     spanish: "lola",
 };
 const LANGUAGE_BUILTIN_VOICES = {
-    "english_2026-04": ["alba"],
+    "english_2026-04": ["jane", "alba"],
     french_24l: ["estelle"],
     german: ["juergen"],
     italian: ["giovanni"],
@@ -48,7 +48,6 @@ const MODEL_STEMS = {
     mimi_decoder: "mimi_decoder_int8.onnx",
 };
 const DEBUG_LOGS = false;
-const SENTENCE_GAP_SEC = 0.25;
 const MAX_FRAMES = 500;
 const LSD_STEPS = 1;
 const RESET_FLOW_STATE_EACH_CHUNK = true;
@@ -1054,7 +1053,8 @@ async function runGenerationPipeline(voiceName, chunks, framesAfterEos) {
             }
             const shouldStop = eosStep != null && step >= eosStep + framesAfterEos;
 
-            const temperature = 0.7;
+            // Kyutai's English 2026-04 config prefers 0.3; other bundles retain 0.7.
+            const temperature = currentLanguage === "english_2026-04" ? 0.3 : 0.7;
             const std = Math.sqrt(temperature);
             const latentData = new Float32Array(currentLatentDim);
             for (let i = 0; i < currentLatentDim; i++) {
@@ -1127,23 +1127,6 @@ async function runGenerationPipeline(voiceName, chunks, framesAfterEos) {
             chunkEnded = isGenerating;
         }
 
-        if (chunkEnded && isGenerating && chunkIdx < chunks.length - 1
-            && chunks[chunkIdx].boundary === "sentence") {
-            const gapSamples = Math.max(1, Math.floor(SENTENCE_GAP_SEC * currentSampleRate));
-            const silence = new Float32Array(gapSamples);
-            postMessage({
-                type: "audio_chunk",
-                data: silence,
-                metrics: {
-                    bbTime: 0,
-                    decTime: 0,
-                    chunkDuration: gapSamples / currentSampleRate,
-                    isFirst: false,
-                    isLast: false,
-                    isSilence: true,
-                },
-            }, [silence.buffer]);
-        }
     }
 
     const totalTime = (performance.now() - generationStart) / 1000;

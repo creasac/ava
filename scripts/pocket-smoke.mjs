@@ -2,7 +2,8 @@ const DEBUG_PORT = Number(process.env.CHROME_DEBUG_PORT || 9223);
 const AVA_URL = process.env.AVA_URL || "http://127.0.0.1:8000/";
 const TEST_LANGUAGE = process.env.TEST_LANGUAGE || "english_2026-04";
 const TEST_VOICE = {
-  "english_2026-04": "alba",
+  "english_2026-04": "jane",
+  french_24l: "estelle",
   german: "juergen",
   italian: "giovanni",
   portuguese: "rafael",
@@ -10,6 +11,7 @@ const TEST_VOICE = {
 }[TEST_LANGUAGE];
 const TEST_TEXT = {
   "english_2026-04": "ava should stream this Pocket TTS benchmark and let us move through received audio.",
+  french_24l: "ava lit ce texte en français et permet de déplacer la lecture.",
   german: "ava soll diesen deutschen Text streamen und die Wiedergabe sofort ermöglichen.",
   italian: "ava dovrebbe leggere questo testo italiano e avviare subito la riproduzione.",
   portuguese: "ava deve ler este texto em português e iniciar a reprodução imediatamente.",
@@ -77,7 +79,7 @@ if (process.env.NO_RELOAD !== "1") {
 }
 
 while (Date.now() < timeoutAt) {
-  const ready = await evaluate(`document.readyState === 'complete' && document.querySelector('script[src*="app.js?v=27"]') !== null`);
+  const ready = await evaluate(`document.readyState === 'complete' && document.querySelector('script[src*="app.js?v=47"]') !== null`);
   if (ready) break;
   await new Promise((resolve) => setTimeout(resolve, 250));
 }
@@ -87,6 +89,7 @@ const languageOptions = await evaluate(`[
 ].map((option) => option.value)`);
 const expectedLanguages = [
   "english_2026-04",
+  "french_24l",
   "german",
   "italian",
   "portuguese",
@@ -162,9 +165,9 @@ if (process.env.EXPECT_ISOLATION_ERROR === "1") {
 }
 
 const gainReset = await evaluate(`(async () => {
-  const { PCMPlayerWorklet } = await import('./pocket/PCMPlayerWorklet.js?v=7');
+  const { PCMPlayerWorklet } = await import('./pocket/PCMPlayerWorklet.js?v=10');
   const context = new AudioContext({ sampleRate: 24000 });
-  const player = new PCMPlayerWorklet(context, { minBufferBeforePlaybackMs: 220 });
+  const player = new PCMPlayerWorklet(context);
   await player.initPromise;
   player.volume = 0.73;
   for (let index = 0; index < 5; index += 1) {
@@ -185,7 +188,7 @@ const restoredPreferences = await evaluate(`(() => {
   const saved = JSON.parse(localStorage.getItem('ava-preferences-v1') || 'null');
   return saved ? {
     saved,
-    expectedLanguage: ['english_2026-04', 'german', 'italian', 'portuguese', 'spanish'].includes(saved.language)
+    expectedLanguage: ['english_2026-04', 'french_24l', 'german', 'italian', 'portuguese', 'spanish'].includes(saved.language)
       ? saved.language
       : 'english_2026-04',
     language: document.querySelector('#language-select').value,
@@ -385,7 +388,7 @@ while (Date.now() < timeoutAt) {
         '#player-message',
         '#live-badge',
       ].every((selector) => !document.querySelector(selector));
-      const timeFormat = document.querySelector('.time-line')?.textContent.replace(/\s+/g, ' ').trim();
+      const timeFormat = document.querySelector('.time-values')?.textContent.replace(/\s+/g, ' ').trim();
 
       const cache = await caches.open('ava-pocket-tts-en-58a6d00-d0c0c79-v1');
       const cacheUrls = (await cache.keys()).map((request) => request.url);

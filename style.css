@@ -567,11 +567,25 @@ select option {
 .time-line {
   min-height: 25px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 12px;
   color: var(--timeline-text);
   font-variant-numeric: tabular-nums;
   font-size: 0.68rem;
+}
+
+.time-values {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.playback-hint {
+  min-width: 0;
+  flex: 1 1 14rem;
+  text-align: center;
+  line-height: 1.45;
+  visibility: hidden;
 }
 
 .play-button {
