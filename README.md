@@ -49,9 +49,9 @@ French uses the substantially larger 24-layer bundle. It works locally like the
 other languages, but generation is much slower on typical CPUs and can produce
 more gaps during immediate playback.
 
-English offers Jane and Alba; the other languages each have one built-in voice.
-Older remembered English Alba defaults migrate once to Jane. Cloned voice choices
-and later explicit Alba selections are preserved. Cloned voices are language-specific.
+English offers Jane; the other languages each have one built-in voice.
+Remembered English Alba selections migrate to Jane. Cloned voice choices are
+preserved. Cloned voices are language-specific.
 
 English uses sampling temperature 0.3, following [Kyutai's English configuration](https://github.com/kyutai-labs/pocket-tts/blob/main/pocket_tts/config/english_2026-04.yaml).
 Its human evaluations preferred 0.3 with equal word error rate; this is not a
@@ -63,8 +63,7 @@ Each 6-layer language requires an approximately 130–133 MB first-use model
 download. French requires about 387 MB on first use, including its Estelle voice.
 The model assets across all six languages total about 1.01 GB; voice files add to
 that. Jane's pinned voice state is 7,374,072 bytes (about 7.4 MB), included in the
-English first-use total of about 132.8 MB. Alba is downloaded on selection, and
-existing cached model weights are reused. ava stores completed bundles in the browser Cache API, requests persistent
+English first-use total of about 132.8 MB. Existing cached model weights are reused. ava stores completed bundles in the browser Cache API, requests persistent
 storage, and reuses them without another model download. Open the language status
 in the header to inspect or remove stored languages at any time. Removing the
 active language stops its current load or generation; retained audio remains

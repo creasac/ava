@@ -349,16 +349,16 @@ test('Pause/resume, completed replay, and WAV export retain every source sample'
   }
 });
 
-test('Jane is the new default, while clones, other languages, and subsequent Alba choices survive', async () => {
+test('Jane replaces saved Alba choices while clones and other languages survive', async () => {
   const app = await createApp({ voices: { 'english_2026-04': 'alba', german: 'custom:german-voice' } });
   app.evaluate('loadPreferences()');
   assert.equal(app.evaluate('voiceSelections[DEFAULT_LANGUAGE]'), 'jane');
   assert.equal(app.evaluate('voiceSelections.german'), 'custom:german-voice');
   assert.equal(app.evaluate('LANGUAGE_VOICES[DEFAULT_LANGUAGE]'), 'jane');
-  assert.deepEqual(Array.from(app.evaluate('LANGUAGE_BUILTIN_VOICES[DEFAULT_LANGUAGE]')), ['jane', 'alba']);
+  assert.deepEqual(Array.from(app.evaluate('LANGUAGE_BUILTIN_VOICES[DEFAULT_LANGUAGE]')), ['jane']);
   app.elements.get('#voice-select').value = 'alba';
   app.evaluate('savePreferences(); loadPreferences()');
-  assert.equal(app.evaluate('voiceSelections[DEFAULT_LANGUAGE]'), 'alba');
+  assert.equal(app.evaluate('voiceSelections[DEFAULT_LANGUAGE]'), 'jane');
   const custom = await createApp({ voices: { 'english_2026-04': 'custom:my-voice' } });
   custom.evaluate('loadPreferences()');
   assert.equal(custom.evaluate('voiceSelections[DEFAULT_LANGUAGE]'), 'custom:my-voice');

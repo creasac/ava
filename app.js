@@ -32,7 +32,7 @@ const LANGUAGE_VOICES = {
   spanish: LANGUAGE_DETAILS.spanish.voice,
 };
 const LANGUAGE_BUILTIN_VOICES = {
-  [DEFAULT_LANGUAGE]: ["jane", "alba"],
+  [DEFAULT_LANGUAGE]: ["jane"],
   french_24l: ["estelle"],
   german: ["juergen"],
   italian: ["giovanni"],
@@ -309,9 +309,8 @@ function loadPreferences() {
 
     if (saved.voices && typeof saved.voices === "object") {
       voiceSelections = { ...saved.voices };
-      // Older versions remembered Alba even when the user never chose a voice.
-      // Migrate that former default once, keeping cloned voices and later choices.
-      if (saved.englishDefaultVoice !== "jane" && voiceSelections[DEFAULT_LANGUAGE] === "alba") {
+      // Alba is no longer available; migrate saved selections to Jane.
+      if (voiceSelections[DEFAULT_LANGUAGE] === "alba") {
         voiceSelections[DEFAULT_LANGUAGE] = "jane";
       }
     }
@@ -590,7 +589,7 @@ function stopAtSessionLimit() {
 function getWorker() {
   if (worker) return worker;
 
-  worker = new Worker(new URL("./pocket/inference-worker.js?v=19", import.meta.url), {
+  worker = new Worker(new URL("./pocket/inference-worker.js?v=20", import.meta.url), {
     type: "module",
     name: "ava-pocket-tts",
   });

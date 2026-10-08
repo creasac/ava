@@ -8,7 +8,7 @@ The browser inference worker and streaming worklet are adapted from [KevinAHM/po
 
 The predefined voice states are downloaded from [Kyutai's no-voice-cloning model revision `e041936`](https://huggingface.co/kyutai/pocket-tts-without-voice-cloning/commit/e041936c75475d350b405bc870bcf7c22da4e9e6), licensed under Creative Commons Attribution 4.0.
 
-Jane, Ava's default English voice, uses the `english_2026-04/embeddings/jane.safetensors` state at that revision (7,374,072 bytes; SHA-256 `37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008`). Kyutai's [official preset mapping](https://github.com/kyutai-labs/pocket-tts/blob/main/pocket_tts/utils/utils.py) identifies Jane's source as [VCTK `p339_023_enhanced.wav`](https://huggingface.co/kyutai/tts-voices/blob/main/vctk/p339_023_enhanced.wav). Alba remains available.
+Jane, Ava's default English voice, uses the `english_2026-04/embeddings/jane.safetensors` state at that revision (7,374,072 bytes; SHA-256 `37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008`). Kyutai's [official preset mapping](https://github.com/kyutai-labs/pocket-tts/blob/main/pocket_tts/utils/utils.py) identifies Jane's source as [VCTK `p339_023_enhanced.wav`](https://huggingface.co/kyutai/tts-voices/blob/main/vctk/p339_023_enhanced.wav).
 
 The vendored `pocket/sentencepiece.js` retains its embedded third-party copyright and license notices.
 

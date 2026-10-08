@@ -27,7 +27,7 @@ const LANGUAGE_DEFAULT_VOICES = {
     spanish: "lola",
 };
 const LANGUAGE_BUILTIN_VOICES = {
-    "english_2026-04": ["jane", "alba"],
+    "english_2026-04": ["jane"],
     french_24l: ["estelle"],
     german: ["juergen"],
     italian: ["giovanni"],
