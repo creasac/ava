@@ -66,6 +66,7 @@ export class PCMPlayerWorklet extends EventEmitter {
             // State
             this.streamEnded = false;
             this.playbackCompleteReported = false;
+            this.playbackWaiting = null;
             this.samplesPlayed = 0;
             this.sessionId = 0;
 
@@ -211,6 +212,15 @@ export class PCMPlayerWorklet extends EventEmitter {
             }
 
             const buffered = this.getBufferedSamples();
+            const waiting = buffered === 0 && !this.streamEnded;
+            if (waiting !== this.playbackWaiting) {
+              this.playbackWaiting = waiting;
+              this.port.postMessage({
+                type: 'playback-waiting',
+                sessionId: this.sessionId,
+                waiting
+              });
+            }
 
             if (buffered < numSamples) {
               // Underrun - play what we have and fill rest with silence
@@ -302,6 +312,7 @@ export class PCMPlayerWorklet extends EventEmitter {
             this.isPlaying = false;
             this.streamEnded = false;
             this.playbackCompleteReported = false;
+            this.playbackWaiting = null;
             this.samplesPlayed = 0;
             this.frameCount = 0;
             this.sendCapacityUpdate();
@@ -334,6 +345,10 @@ export class PCMPlayerWorklet extends EventEmitter {
             this.metrics.underruns++;
             // Try to send more data immediately
             this.processPendingChunks();
+            break;
+
+          case 'playback-waiting':
+            this.emit('playbackWaiting', { waiting: e.data.waiting });
             break;
 
           case 'position':

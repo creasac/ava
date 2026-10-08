@@ -127,6 +127,7 @@ let isExporting = false;
 let ignoreNextStreamEnd = false;
 let isPlaying = false;
 let wantsPlayback = false;
+let playbackWaiting = false;
 let playbackQueued = false;
 let isSeeking = false;
 let firstChunkSeen = false;
@@ -507,7 +508,10 @@ function updatePlayerControls() {
       ? "Download WAV"
       : "Available when generation finishes";
   elements.player.classList.toggle("is-empty", !enabled);
-  elements.playbackHint.style.visibility = isGenerating && !streamEnded && receivedSamples > 0
+  elements.playbackHint.style.visibility = wantsPlayback && (
+    (!playbackQueued && (!streamEnded || hasPendingGeneration()))
+    || (!streamEnded && playbackWaiting)
+  )
     ? "visible"
     : "hidden";
 }
@@ -541,6 +545,7 @@ function updateTimeline() {
 }
 
 function updatePlayState() {
+  updatePlayerControls();
   const requested = wantsPlayback;
   const playing = wantsPlayback && isPlaying && audioContext?.state === "running";
   const waiting = requested && !playbackQueued;
@@ -758,13 +763,18 @@ async function initializePlayer() {
     if (!AudioContextConstructor) throw new Error("AudioWorklet is unavailable in this browser");
 
     audioContext = new AudioContextConstructor({ sampleRate: SAMPLE_RATE, latencyHint: "interactive" });
-    const { PCMPlayerWorklet } = await import("./pocket/PCMPlayerWorklet.js?v=10");
+    const { PCMPlayerWorklet } = await import("./pocket/PCMPlayerWorklet.js?v=11");
     streamPlayer = new PCMPlayerWorklet(audioContext);
     await streamPlayer.initPromise;
 
     streamPlayer.addEventListener("firstPlayback", () => {
       isPlaying = wantsPlayback && audioContext?.state === "running";
       updatePlayState();
+    });
+
+    streamPlayer.addEventListener("playbackWaiting", (event) => {
+      playbackWaiting = event.detail.waiting;
+      updatePlayerControls();
     });
 
     streamPlayer.addEventListener("position", (event) => {
@@ -1329,6 +1339,7 @@ function queueFromPosition(targetSamples) {
   streamPlayer.reset();
   playbackQueued = false;
   isPlaying = false;
+  playbackWaiting = receivedSamples <= targetSamples;
   playbackBaseSamples = targetSamples;
   playbackPositionSamples = targetSamples;
   maybeStartPlayback();
