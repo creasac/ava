@@ -380,36 +380,74 @@ test('seeking to the completed end clears Play intent and permits replay', async
 });
 
 
-test('playback hint immediately tracks initial waiting, underruns, resumption, and manual pause', async () => {
+test('playback hint stays visible for three seconds across rapid underruns and resumption', async () => {
   const app = await createApp();
   await app.begin(2);
   const hint = () => app.elements.get('#playback-hint').style.visibility;
   await app.play();
   assert.equal(hint(), 'visible');
-  await app.play();
-  assert.equal(hint(), 'hidden');
-  await app.play();
-  assert.equal(hint(), 'visible');
+  const timerId = app.evaluate('playbackHintTimer');
+  const timer = app.timers.get(timerId);
+  assert.equal(timer.delay, 3000);
+  app.setTime(1);
   app.receive({ type: 'audio_chunk', data: samples(quantum * 2) });
   app.render();
-  assert.equal(hint(), 'hidden');
+  assert.equal(hint(), 'visible');
   app.render();
   app.render();
   assert.equal(hint(), 'visible');
-  app.receive({ type: 'audio_chunk', data: samples(quantum * 2) });
-  app.render();
-  assert.equal(hint(), 'hidden');
-  app.render();
-  app.render();
-  assert.equal(hint(), 'visible');
+  assert.equal(app.evaluate('playbackHintTimer'), timerId);
+  app.setTime(3);
+  app.timers.delete(timerId);
+  timer.fn();
+  assert.equal(hint(), 'visible', 'still waiting after minimum expires');
+  assert.equal(app.evaluate('playbackHintTimer'), null);
   app.receive({ type: 'audio_chunk', data: samples(1) });
   app.render();
-  assert.equal(hint(), 'hidden');
+  assert.equal(hint(), 'hidden', 'resumption after minimum hides hint');
   app.render();
-  assert.equal(hint(), 'visible');
+  assert.equal(hint(), 'visible', 'new starvation immediately starts a fresh minimum');
+  assert.equal(app.timers.get(app.evaluate('playbackHintTimer')).delay, 3000);
   await app.play();
   assert.equal(hint(), 'hidden');
+  assert.equal(app.evaluate('playbackHintTimer'), null);
 });
+
+test('playback hint hides at the three-second deadline if audio has resumed', async () => {
+  const app = await createApp();
+  await app.begin(2);
+  await app.play();
+  const timerId = app.evaluate('playbackHintTimer');
+  const timer = app.timers.get(timerId);
+  app.setTime(2.999);
+  app.receive({ type: 'audio_chunk', data: samples(quantum * 2) });
+  app.render();
+  assert.equal(app.elements.get('#playback-hint').style.visibility, 'visible');
+  app.setTime(3);
+  app.timers.delete(timerId);
+  timer.fn();
+  assert.equal(app.elements.get('#playback-hint').style.visibility, 'hidden');
+});
+
+for (const action of ['clearSession()', 'resetSession("new text")', 'finishStream()', 'failWorker(new Error("test failure"))']) {
+  test(`playback hint clears its obsolete timer on ${action}`, async () => {
+    const app = await createApp();
+    await app.begin(2);
+    await app.play();
+    const oldTimer = app.evaluate('playbackHintTimer');
+    assert.ok(app.timers.has(oldTimer));
+    app.evaluate(action);
+    assert.equal(app.timers.has(oldTimer), false);
+    if (!action.startsWith('resetSession')) {
+      assert.equal(app.elements.get('#playback-hint').style.visibility, 'hidden');
+      assert.equal(app.evaluate('playbackHintTimer'), null);
+    } else {
+      assert.notEqual(app.evaluate('playbackHintTimer'), oldTimer);
+    }
+    if (action.startsWith('failWorker')) await app.finish('generation_stopped');
+    else await app.finish();
+  });
+}
 
 test('playback hint stays hidden with available audio and after stream completion', async () => {
   const app = await createApp();

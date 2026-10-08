@@ -128,6 +128,8 @@ let ignoreNextStreamEnd = false;
 let isPlaying = false;
 let wantsPlayback = false;
 let playbackWaiting = false;
+let playbackHintTimer = null;
+let playbackHintVisible = false;
 let playbackQueued = false;
 let isSeeking = false;
 let firstChunkSeen = false;
@@ -508,12 +510,34 @@ function updatePlayerControls() {
       ? "Download WAV"
       : "Available when generation finishes";
   elements.player.classList.toggle("is-empty", !enabled);
-  elements.playbackHint.style.visibility = wantsPlayback && (
-    (!playbackQueued && (!streamEnded || hasPendingGeneration()))
-    || (!streamEnded && playbackWaiting)
-  )
-    ? "visible"
-    : "hidden";
+  updatePlaybackHint();
+}
+
+function clearPlaybackHint() {
+  clearTimeout(playbackHintTimer);
+  playbackHintTimer = null;
+  playbackHintVisible = false;
+  elements.playbackHint.style.visibility = "hidden";
+}
+
+function updatePlaybackHint() {
+  if (!wantsPlayback || (streamEnded && !hasPendingGeneration())) {
+    clearPlaybackHint();
+    return;
+  }
+  const waiting = !streamEnded && playbackWaiting
+    || (!playbackQueued && receivedSamples <= playbackPositionSamples
+      && (!streamEnded || hasPendingGeneration()));
+  if (waiting && !playbackHintVisible) {
+    playbackHintVisible = true;
+    playbackHintTimer = setTimeout(() => {
+      playbackHintTimer = null;
+      updatePlaybackHint();
+    }, 3000);
+  } else if (!waiting && playbackHintTimer === null) {
+    playbackHintVisible = false;
+  }
+  elements.playbackHint.style.visibility = playbackHintVisible ? "visible" : "hidden";
 }
 
 function updateTimeline() {
@@ -560,6 +584,7 @@ function updatePlayState() {
 }
 
 function failWorker(error) {
+  clearPlaybackHint();
   const failedWorker = worker;
   const pendingLoad = modelLoadRequest;
   const pendingGeneration = generationRequest;
@@ -1121,6 +1146,8 @@ function ensureModel(language) {
 }
 
 function resetSession(text) {
+  clearPlaybackHint();
+  playbackWaiting = false;
   streamPlayer?.reset();
   audioChunks = [];
   receivedSamples = 0;
@@ -1144,6 +1171,8 @@ function resetSession(text) {
 }
 
 function clearSession() {
+  clearPlaybackHint();
+  playbackWaiting = false;
   acceptGenerationAudio = false;
   streamPlayer?.reset();
   audioChunks = [];
@@ -1362,6 +1391,7 @@ function maybeStartPlayback() {
 }
 
 function finishStream() {
+  clearPlaybackHint();
   streamEnded = true;
   if (!sessionAvailable) wantsPlayback = false;
   if (wantsPlayback && playbackQueued) streamPlayer?.notifyStreamEnded();
