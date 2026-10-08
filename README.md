@@ -1,10 +1,10 @@
-# ava
+<h3 align="center">ava</h3>
 
-ava is a minimal Pocket TTS player: paste text, choose a language and voice, and listen.
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/10532485-66d8-44f8-ad37-48e92b8d73ed" alt="" width="120" align="middle">
+</p>
 
-**Live:** [ava.creasac.com](https://ava.creasac.com)
-
-<img width="1120" height="1121" alt="ava" src="https://github.com/user-attachments/assets/10532485-66d8-44f8-ad37-48e92b8d73ed" />
+<p align="center"><code>ava</code> is a minimal Pocket TTS player: paste text, choose a language and voice, and listen.<br>The name <code>ava</code> comes from Persian, meaning “voice” or “sound.”</p>
 
 ## Use
 
